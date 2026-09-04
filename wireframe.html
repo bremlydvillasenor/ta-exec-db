@@ -3,800 +3,147 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TA Analytics — Executive Report</title>
+<title>TA Analytics — Executive Summary Wireframe</title>
 <style>
 :root{
-  --navy:#0D2137; --navy-2:#3E5C7A; --navy-3:#C3D2E0;
-  --ink:#0F172A; --ink-2:#334155; --ink-3:#475569;
-  --mute:#64748B; --mute-2:#94A3B8;
-  --line:#E2E8F0; --line-2:#EEF2F6; --bg:#F1F5F9; --alt:#FAFCFE;
-  --green:#16A34A; --green-d:#15803D; --red:#DC2626; --red-d:#991B1B;
-  --red-bg:#FEF2F2; --amber:#F59E0B; --amber-d:#B45309; --orange:#F97316; --yellow:#FBBF24;
-  --blue:#1D4ED8; --link:#2563EB; --bar:#1E3A5F;
+  --navy:#0D2137;--navy2:#3E5C7A;--ink:#0F172A;--ink2:#334155;--mute:#64748B;--mute2:#94A3B8;
+  --line:#E2E8F0;--line2:#EEF2F6;--bg:#F1F5F9;--white:#fff;--green:#16A34A;--green2:#15803D;
+  --red:#DC2626;--red2:#991B1B;--redbg:#FEF2F2;--amber:#F59E0B;--amber2:#B45309;--blue:#2563EB;--blue2:#1D4ED8;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{
-  font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-  background:#DDE3EA; color:var(--ink); -webkit-font-smoothing:antialiased;
-  display:flex; align-items:center; justify-content:center; min-height:100vh; padding:16px;
-}
-/* 16:9 Power BI canvas — 1280 x 720 */
-.app{
-  width:1280px; height:720px; flex:none; display:flex; overflow:hidden;
-  background:var(--bg); border-radius:10px; box-shadow:0 10px 34px rgba(15,23,42,.16);
-}
-
-/* ---------- sidebar ---------- */
-.side{width:190px;flex:none;background:var(--navy);padding:14px 0;color:#fff;overflow:hidden}
-.brand{display:flex;align-items:center;gap:8px;padding:0 15px 12px}
-.brand i{width:18px;height:18px;border-radius:5px;background:#22C55E;display:block}
-.brand span{font-size:13px;font-weight:600}
-.navgroup{font-size:8px;font-weight:600;letter-spacing:1px;color:#5B7794;padding:11px 15px 4px}
-.nav{display:flex;align-items:center;gap:9px;padding:6px 10px 6px 15px;font-size:10.5px;color:var(--navy-3);cursor:pointer}
-.nav i{width:20px;height:11px;border-radius:3px;background:var(--navy-2);flex:none}
-.nav:hover{background:rgba(255,255,255,.05)}
-.nav.on{background:var(--green);color:#fff;font-weight:600}
-.nav.on i{background:#fff}
-
-/* ---------- layout ---------- */
-.main{flex:1;min-width:0;padding:12px 13px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
-.page{display:none}
-.page.on{display:flex}
-.row{display:flex;gap:8px;align-items:stretch;flex:1;min-height:0}
-.col{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
-.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px 9px;overflow:hidden}
-.chead{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.ctitle{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600}
-.info{width:11px;height:11px;border:1.1px solid #B6C2D1;border-radius:50%;flex:none}
-.link{font-size:9.5px;font-weight:500;color:var(--link);text-decoration:none;white-space:nowrap}
-.link:hover{text-decoration:underline}
-.sub{font-size:9px;color:var(--mute-2);margin-top:2px;line-height:1.35}
-.rule{height:1px;background:var(--line-2)}
-
-/* ---------- header ---------- */
-.top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex:none}
-h1{font-size:19px;font-weight:700;letter-spacing:-.3px}
-.tagline{font-size:10px;color:var(--mute);margin-top:2px}
-.basis{display:flex;align-items:center;gap:5px;font-size:8.5px;font-weight:500;color:var(--mute-2);margin-top:4px}
-.basis b{width:4px;height:4px;border-radius:50%;background:var(--mute-2);display:block;flex:none}
-.filters{display:flex;gap:7px;align-items:flex-end;flex:none}
-.filter label{display:block;font-size:8.5px;font-weight:500;color:var(--mute);margin-bottom:3px}
-.filter div{
-  background:#fff;border:1px solid #CBD5E1;border-radius:6px;padding:5px 7px;
-  font-size:9.5px;font-weight:500;display:flex;justify-content:space-between;align-items:center;gap:9px;
-}
-.stamp{
-  background:#E8EEF5;border-radius:6px;padding:5px 8px;font-size:9.5px;font-weight:500;
-  color:var(--ink-3);display:flex;align-items:center;gap:5px;white-space:nowrap;
-}
-.stamp i{width:10px;height:10px;border:1.1px solid var(--mute-2);border-radius:50%;display:block}
-
-/* ---------- kpi ---------- */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;flex:none;height:166px}
-.kpis.three{grid-template-columns:repeat(3,1fr)}
-.kpi{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px 9px;display:flex;flex-direction:column;overflow:hidden}
-.kpi.alert{border-color:#F3C7C7;background:#FFFCFC;box-shadow:inset 3px 0 0 var(--red)}
-.kpi h3{font-size:10.5px;font-weight:600;color:var(--ink-2)}
-.kpi .def{font-size:8.5px;color:var(--mute-2);margin-top:3px;min-height:20px;line-height:1.35}
-.val{display:flex;align-items:baseline;gap:5px;margin-top:2px}
-.val b{font-size:24px;font-weight:700;letter-spacing:-.6px;line-height:1.1}
-.val span{font-size:9.5px;font-weight:500;color:var(--mute)}
-.kpi.alert .val b{color:var(--red-d)}
-.delta{display:flex;align-items:center;gap:4px;font-size:10px;margin-top:5px}
-.delta em{font-style:normal;font-weight:600}
-.delta small{font-size:9.5px;color:var(--mute);font-weight:400}
-.delta.sec{font-size:9px;margin-top:3px}
-.delta.sec small{font-size:9px}
-.tri{width:0;height:0;border-left:3.5px solid transparent;border-right:3.5px solid transparent;flex:none}
-.up{border-bottom:5.5px solid currentColor}
-.down{border-top:5.5px solid currentColor}
-.foot{display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:7px;gap:8px}
-.foot p{font-size:8.5px;font-weight:500;color:var(--mute)}
-.sev{display:flex;gap:2px;margin-top:6px}
-.sev i{display:block;height:5px;border-radius:2px}
-.sevlab{font-size:8.5px;color:var(--mute-2);margin-top:4px}
-.jump{
-  background:#fff;border:1px solid #CBD5E1;border-radius:6px;padding:4px 7px;
-  font-size:9px;font-weight:600;color:var(--ink-2);font-family:inherit;cursor:pointer;
-  display:flex;align-items:center;gap:5px;white-space:nowrap;
-}
-.jump:hover{background:#F1F5F9}
-
-/* ---------- funnel table ---------- */
-table{width:100%;border-collapse:collapse;margin-top:5px}
-th{font-size:7.5px;font-weight:600;color:var(--mute-2);letter-spacing:.4px;text-align:right;padding:0 8px 4px 0}
-th:nth-child(1),th:nth-child(2){text-align:left}
-td{font-size:9.5px;padding:2px 8px 2px 0;vertical-align:middle}
-tbody tr:nth-child(even){background:var(--alt)}
-tbody tr.flag{background:#FEF6F6}
-td.stage{width:132px;padding-left:4px}
-.stagecell{display:flex;align-items:center;gap:6px}
-.stagecell i{width:11px;height:11px;border-radius:50%;background:#EEF3F9;border:1px solid #DCE5EE;flex:none}
-tr.flag .stagecell i{background:var(--red);border-color:var(--red)}
-.stagecell span{font-weight:500;color:#1E293B}
-.tag{background:var(--red);color:#fff;font-size:6px;font-weight:700;padding:1px 4px;border-radius:3px;letter-spacing:.3px}
-.barcell{display:flex;align-items:center;gap:7px}
-.barcell i{height:9px;border-radius:2px;background:var(--bar);display:block;flex:none}
-.barcell b{font-size:9.5px;font-weight:600}
-td.num{text-align:right;font-weight:500;color:var(--ink-2);width:56px}
-td.cum{text-align:right;color:var(--ink-2);width:54px}
-td.days{text-align:right;color:var(--mute);font-weight:400;width:46px}
-td.tgt{text-align:right;color:var(--mute-2);font-weight:400;width:50px}
-td.hot{color:var(--red);font-weight:700}
-td.mid{color:var(--amber-d);font-weight:700}
-
-.tablenote{font-size:8px;color:var(--mute-2);margin-top:6px;line-height:1.4}
-.callout{display:flex;gap:7px;background:var(--red-bg);border-radius:6px;padding:7px 9px;margin-top:7px}
-.callout i{width:6px;height:6px;border-radius:50%;background:var(--red);flex:none;margin-top:3px}
-.callout b{font-size:9.5px;font-weight:700;color:var(--red-d)}
-.callout span{font-size:9px;color:#B91C1C}
-.callout p{font-size:9px;color:#B91C1C;margin-top:2px;line-height:1.4}
-
-/* ---------- risk bands ---------- */
-.band{margin-top:5px}
-.bandtop{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.bandname{display:flex;align-items:center;gap:6px;min-width:0}
-.bandname i{width:8px;height:8px;border-radius:2px;flex:none}
-.bandname b{font-size:10.5px;font-weight:600;color:#1E293B}
-.bandname span{font-size:9px;color:var(--mute-2)}
-.bandval{display:flex;align-items:baseline;gap:5px;flex:none}
-.bandval b{font-size:11.5px;font-weight:700}
-.bandval span{font-size:9px;color:var(--mute-2)}
-.track{height:8px;border-radius:3px;background:#F1F5F9;margin-top:3px;overflow:hidden}
-.track i{height:8px;border-radius:3px;display:block}
-.riskfoot{display:flex;justify-content:space-between;align-items:center;margin-top:7px;gap:8px}
-.riskfoot p{font-size:8px;color:var(--mute-2)}
-.riskfoot div{display:flex;align-items:center;gap:4px;font-size:9.5px}
-
-.badge{background:#F1F5F9;border-radius:4px;padding:2px 5px;font-size:7.5px;font-weight:600;color:var(--mute);letter-spacing:.3px}
-.legend{display:flex;gap:10px;margin-top:5px;flex-wrap:wrap}
-.legend div{display:flex;align-items:center;gap:4px;font-size:8.5px;font-weight:500;color:var(--ink-3)}
-.legend i{width:11px;height:2.5px;border-radius:1px;display:block;flex:none}
-.legend i.blk{height:8px;width:8px;border-radius:2px}
-
-/* ---------- split panels ---------- */
-.split{display:flex;gap:14px;margin-top:6px;min-height:0}
-.split>div{flex:1;min-width:0}
-.rightcol{border-left:1px solid var(--line-2);padding-left:14px}
-.colhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:6px}
-.colhead b{font-size:7.5px;font-weight:600;letter-spacing:.4px;color:var(--mute-2)}
-.colhead span{font-size:8.5px;color:var(--mute-2)}
-
-/* ---------- constraint / reason bars ---------- */
-.con{margin-top:4px}
-.contop{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-.contop span{font-size:9.5px;font-weight:500;color:#1E293B}
-.contop b{font-size:10px;font-weight:700;white-space:nowrap}
-.contop b em{font-style:normal;font-size:8.5px;font-weight:400;color:var(--mute-2);margin-left:4px}
-.ctrack{height:7px;border-radius:2px;background:#F1F5F9;margin-top:2px;overflow:hidden}
-.ctrack i{display:block;height:7px;border-radius:2px;background:var(--navy-2)}
-.ctrack i em{display:block;height:7px;background:var(--red)}
-
-/* ---------- early attrition ---------- */
-.tabar{display:flex;height:9px;border-radius:2px;overflow:hidden;margin-top:6px}
-.tabar i{display:block;height:9px}
-.tasplit{display:flex;justify-content:space-between;margin-top:4px;gap:6px}
-.tasplit div{display:flex;align-items:center;gap:4px;font-size:8.5px;font-weight:500;color:var(--ink-3)}
-.tasplit i{width:8px;height:8px;border-radius:2px;display:block;flex:none}
-.grp{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px;gap:8px}
-.grp b{font-size:8px;font-weight:700;letter-spacing:.3px}
-.grp span{font-size:8.5px;color:var(--mute-2)}
-
-@media (max-width:1320px){
-  body{display:block;padding:0}
-  .app{border-radius:0}
-}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#DDE3EA;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;-webkit-font-smoothing:antialiased}
+.app{width:1280px;height:720px;background:var(--bg);border-radius:10px;box-shadow:0 10px 34px rgba(15,23,42,.16);padding:14px 16px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex:none}
+h1{font-size:20px;letter-spacing:-.35px}.tag{font-size:10px;color:var(--mute);margin-top:2px}.basis{font-size:8.5px;color:var(--mute2);margin-top:4px}
+.filters{display:flex;gap:7px;align-items:flex-end}.filter label{display:block;font-size:8px;color:var(--mute);margin-bottom:3px}.filter div,.stamp{background:#fff;border:1px solid #CBD5E1;border-radius:6px;padding:5px 8px;font-size:9.5px;font-weight:500;white-space:nowrap}.filter div{min-width:112px;display:flex;justify-content:space-between;gap:9px}.stamp{background:#E8EEF5;color:var(--ink2)}
+.note{font-size:8.3px;color:var(--mute);background:#E8EEF5;border-left:3px solid var(--blue);padding:5px 8px;border-radius:4px;flex:none}.note b{color:var(--ink2)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;height:120px;flex:none}.kpi{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px;display:flex;flex-direction:column}.kpi.quality{box-shadow:inset 3px 0 0 var(--blue)}.kpi.alert{box-shadow:inset 3px 0 0 var(--red);background:#FFFCFC}.kpi h3{font-size:10.5px;color:var(--ink2)}.def{font-size:8.2px;color:var(--mute2);line-height:1.3;margin-top:2px;min-height:20px}.val{display:flex;align-items:baseline;gap:5px;margin-top:2px}.val b{font-size:25px;letter-spacing:-.6px}.val span{font-size:9px;color:var(--mute)}.kpi.alert .val b{color:var(--red2)}.delta{font-size:8.7px;font-weight:600;margin-top:4px}.bad{color:var(--red2)}.watch{color:var(--amber2)}.good{color:var(--green2)}.foot{font-size:8px;color:var(--mute2);margin-top:auto;padding-top:5px;line-height:1.3}
+.row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;min-height:0}.r1{height:212px;flex:none}.r2{flex:1}.s4{grid-column:span 4}.s5{grid-column:span 5}.s6{grid-column:span 6}.s7{grid-column:span 7}.s8{grid-column:span 8}.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;overflow:hidden;min-width:0}.chead{display:flex;justify-content:space-between;align-items:center;gap:8px}.ctitle{font-size:11px;font-weight:700}.sub{font-size:8.2px;color:var(--mute2);margin-top:2px;line-height:1.25}.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:5px}.legend span{font-size:7.7px;color:var(--mute);display:flex;align-items:center;gap:4px}.sw{width:12px;height:2px;background:var(--blue);display:inline-block}.sw.dash{border-top:2px dashed var(--blue);height:0;background:none}.sw.red{background:var(--red)}
+svg{width:100%;height:auto;display:block}.axis{font-size:7px;fill:#94A3B8}.grid{stroke:#EEF2F6;stroke-width:1}.axisline{stroke:#CBD5E1;stroke-width:1}.blue{stroke:var(--blue2);stroke-width:2.2;fill:none}.forecast{stroke:var(--blue2);stroke-width:2.2;stroke-dasharray:6 4;fill:none}.redline{stroke:var(--red);stroke-width:2.2;fill:none}.ptb{fill:var(--blue2)}.ptr{fill:var(--red)}
+.risk{margin-top:6px}.riskrow{display:grid;grid-template-columns:74px 1fr 28px;gap:6px;align-items:center;margin:6px 0}.riskrow span{font-size:8.7px;color:var(--ink2)}.riskrow b{font-size:9px;text-align:right}.track{height:7px;background:#F1F5F9;border-radius:3px;overflow:hidden}.fill{height:100%;border-radius:3px;background:var(--navy2)}.fill.r{background:var(--red)}.fill.a{background:var(--amber)}.fill.g{background:var(--green)}.riskfoot{font-size:7.8px;color:var(--mute2);margin-top:6px;line-height:1.35;background:#F8FAFC;border-radius:5px;padding:5px 6px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:5px}.split>div+div{border-left:1px solid var(--line2);padding-left:12px}.minihead{font-size:8px;font-weight:700;color:var(--mute);letter-spacing:.25px;margin-bottom:4px}.con{display:grid;grid-template-columns:105px 1fr 23px;gap:5px;align-items:center;margin:4px 0}.con span{font-size:7.9px;color:var(--ink2)}.con b{font-size:8px;text-align:right}.ctrack{height:6px;background:#F1F5F9;border-radius:2px;overflow:hidden}.ctrack i{display:block;height:100%;background:var(--navy2);border-radius:2px}
+.funnel{display:flex;align-items:flex-end;gap:5px;height:122px;margin-top:5px;border-bottom:1px solid var(--line)}.stage{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;min-width:0}.stage b{font-size:8px;color:var(--ink2);margin-bottom:3px}.bar{width:78%;background:var(--navy);border-radius:3px 3px 0 0;display:flex;align-items:flex-start;justify-content:center;color:#fff;font-size:7.4px;padding-top:3px}.stage span{font-size:7px;color:var(--mute);margin-top:3px;white-space:nowrap}.conv{font-size:6.5px;color:var(--mute2);align-self:center;margin-bottom:42px}.flagbox{font-size:7.7px;color:#B91C1C;background:var(--redbg);padding:5px 7px;border-radius:5px;margin-top:6px;line-height:1.3}.flagbox b{color:var(--red2)}
+.qualitychart{display:flex;flex-direction:column;height:100%}.qualitychart .plot{flex:1;min-height:0;margin-top:3px}.qualitynote{font-size:7.6px;color:var(--mute);line-height:1.3;margin-top:4px;background:#F8FAFC;border-radius:5px;padding:4px 6px}.qualitynote b{color:var(--ink2)}
+.footer{font-size:7.5px;color:var(--mute2);display:flex;justify-content:space-between;gap:12px;flex:none}.footer b{color:var(--ink2)}
+@media(max-width:1320px){body{display:block;padding:0}.app{border-radius:0}}
 </style>
 </head>
 <body>
 <div class="app">
-
-<!-- ============ SIDEBAR ============ -->
-<aside class="side">
-  <div class="brand"><i></i><span>TA Analytics</span></div>
-
-  <div class="navgroup">OVERVIEW</div>
-  <div class="nav on" id="nav-exec" onclick="goto('exec')"><i></i>Executive Summary</div>
-  <div class="nav"><i></i>Demand Overview</div>
-
-  <div class="navgroup">PIPELINE</div>
-  <div class="nav"><i></i>Applications</div>
-  <div class="nav"><i></i>Funnel Conversion</div>
-  <div class="nav"><i></i>Offers</div>
-  <div class="nav"><i></i>Hires</div>
-  <div class="nav"><i></i>Pipeline Health</div>
-  <div class="nav"><i></i>At Risk Requisitions</div>
-
-  <div class="navgroup">OUTCOMES &amp; EFFICIENCY</div>
-  <div class="nav" id="nav-attrition" onclick="goto('attrition')"><i></i>Early Attrition</div>
-  <div class="nav"><i></i>Cost per Hire</div>
-  <div class="nav"><i></i>Efficiency</div>
-  <div class="nav"><i></i>Candidate NPS</div>
-  <div class="nav"><i></i>Recruiter Scorecard</div>
-
-  <div class="navgroup">REFERENCE</div>
-  <div class="nav"><i></i>Data Dictionary</div>
-</aside>
-
-<!-- ============ PAGE 1 — EXECUTIVE SUMMARY ============ -->
-<main class="main page on" id="page-exec">
-
-  <header class="top">
+  <div class="top">
     <div>
-      <h1>Executive Summary</h1>
-      <p class="tagline">Hiring performance, pipeline health, speed and quality</p>
-      <p class="basis"><b></b>Demand = positions with a Target Hire Date (THD) in the selected period. KPI cards compare actual vs FY target or threshold. A requisition averages 1.9 positions.</p>
+      <h1>TA Executive Summary</h1>
+      <div class="tag">Hiring delivery, speed, risk, pipeline health, forecast, and 60-day hiring quality</div>
+      <div class="basis">Actual recruiting activity: Jan 2024–31 May 2026 · Reporting as of 31 May 2026 · Future THD retained through 31 May 2027</div>
     </div>
     <div class="filters">
-      <div class="filter"><label>Date Range</label>
-        <div>Jan 1 – May 31, 2026
-          <svg width="8" height="5" viewBox="0 0 9 5"><path d="M0 0 L4.5 4.5 L9 0" fill="none" stroke="#64748B" stroke-width="1.5"/></svg>
-        </div>
-      </div>
-      <div class="filter"><label>Business Unit</label>
-        <div>All
-          <svg width="8" height="5" viewBox="0 0 9 5"><path d="M0 0 L4.5 4.5 L9 0" fill="none" stroke="#64748B" stroke-width="1.5"/></svg>
-        </div>
-      </div>
-      <div class="filter"><label>Job Family</label>
-        <div>All
-          <svg width="8" height="5" viewBox="0 0 9 5"><path d="M0 0 L4.5 4.5 L9 0" fill="none" stroke="#64748B" stroke-width="1.5"/></svg>
-        </div>
-      </div>
-      <div class="stamp">Data as of: May 31, 2026<i></i></div>
+      <div class="filter"><label>Target Hire Date</label><div><span>Jan–May 2026</span><span>⌄</span></div></div>
+      <div class="filter"><label>Business Unit</label><div><span>All</span><span>⌄</span></div></div>
+      <div class="filter"><label>Job Family</label><div><span>All</span><span>⌄</span></div></div>
+      <div class="filter"><label>Job Level</label><div><span>All</span><span>⌄</span></div></div>
+      <div class="stamp">As of 31 May 2026</div>
     </div>
-  </header>
+  </div>
 
-  <!-- KPI row -->
-  <section class="kpis">
+  <div class="note"><b>Filter behavior:</b> THD controls demand-oriented visuals. The 60-Day Early Attrition KPI and Speed vs Quality chart use fully matured employee-start cohorts and ignore the THD range; Business Unit, Job Family, and Job Level still apply.</div>
 
-    <div class="kpi">
-      <div class="chead"><h3>Positions Filled vs Demand</h3><span class="info"></span></div>
-      <p class="def">Positions filled &divide; positions with a Target Hire Date (THD) in the period</p>
-      <div class="val"><b>78.5%</b><span>1,418 of 1,806</span></div>
-      <div class="delta" style="color:var(--amber-d)"><span class="tri down"></span><em>−11.5 pp</em><small>vs FY Target 90%</small></div>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>388 not started: 138 accepted, awaiting start; 250 without an accepted offer</p>
-        <svg width="52" height="15" viewBox="0 0 80 22" fill="none">
-          <polyline points="0,18.5 20,15.2 40,11.4 60,8.1 80,4.4"
-            stroke="#16A34A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
+  <div class="kpis">
+    <section class="kpi">
+      <h3>Fill Rate</h3><div class="def">Positions filled ÷ requested positions, attributed by Target Hire Date.</div>
+      <div class="val"><b>84.6%</b><span>vs 90% target</span></div><div class="delta watch">Below target</div>
+      <div class="foot">Demand 1,126 · Filled 953 · Open 173</div>
+    </section>
+    <section class="kpi">
+      <h3>Median Time to Fill</h3><div class="def">Offer Accepted Date − Requisition Approval Date.</div>
+      <div class="val"><b>38</b><span>days</span></div><div class="delta good">Accepted offers only</div>
+      <div class="foot">Median used to reduce the effect of long-tail cycle-time outliers.</div>
+    </section>
+    <section class="kpi alert">
+      <h3>At-Risk Open Positions</h3><div class="def">Missed + High Risk + Medium Risk based only on days to source TOAD.</div>
+      <div class="val"><b>61</b><span>of 173 open</span></div><div class="delta bad">35% of open positions</div>
+      <div class="foot">Missed &lt;0 · High 0–7 · Medium 8–14 · On Track ≥15 days</div>
+    </section>
+    <section class="kpi quality">
+      <h3>60-Day Early Attrition</h3><div class="def">Terminations within 60 days ÷ hires in fully matured 60-day start cohorts.</div>
+      <div class="val"><b>8.2%</b><span>quality KPI</span></div><div class="delta watch">Rolling 12 matured cohorts</div>
+      <div class="foot">Latest fully matured start cohort: Mar 2026 · recent immature hires excluded.</div>
+    </section>
+  </div>
+
+  <div class="row r1">
+    <section class="card s7">
+      <div class="chead"><div><div class="ctitle">Actual Fill Rate vs Forecast Fill Rate</div><div class="sub">THD-month attainment with expected fills from the live candidate pipeline.</div></div><div class="legend"><span><i class="sw"></i>Actual</span><span><i class="sw dash"></i>Forecast</span></div></div>
+      <svg viewBox="0 0 690 165" aria-label="Illustrative actual versus forecast fill rate trend">
+        <line x1="42" y1="18" x2="42" y2="138" class="axisline"/><line x1="42" y1="138" x2="674" y2="138" class="axisline"/>
+        <line x1="42" y1="35" x2="674" y2="35" class="grid"/><line x1="42" y1="70" x2="674" y2="70" class="grid"/><line x1="42" y1="105" x2="674" y2="105" class="grid"/>
+        <text x="5" y="38" class="axis">100%</text><text x="10" y="73" class="axis">90%</text><text x="10" y="108" class="axis">80%</text><text x="10" y="141" class="axis">70%</text>
+        <path d="M60 104 L155 97 L250 90 L345 85 L440 80" class="blue"/><path d="M440 80 L535 66 L620 53 L670 44" class="forecast"/>
+        <circle cx="60" cy="104" r="2.8" class="ptb"/><circle cx="155" cy="97" r="2.8" class="ptb"/><circle cx="250" cy="90" r="2.8" class="ptb"/><circle cx="345" cy="85" r="2.8" class="ptb"/><circle cx="440" cy="80" r="2.8" class="ptb"/>
+        <text x="51" y="155" class="axis">Jan</text><text x="146" y="155" class="axis">Feb</text><text x="241" y="155" class="axis">Mar</text><text x="336" y="155" class="axis">Apr</text><text x="431" y="155" class="axis">May</text><text x="526" y="155" class="axis">Jun</text><text x="611" y="155" class="axis">Jul</text>
+      </svg>
+      <div class="sub">Forecast uses stage-to-acceptance yield by Business Unit + Job Family + Job Level + Stage where stable, with broader fallback segments and a requisition-level cap at remaining open positions.</div>
+    </section>
+
+    <section class="card s5">
+      <div class="ctitle">Open Positions by Risk Band</div><div class="sub">Risk is determined only by TOAD versus the fixed reporting as-of date.</div>
+      <div class="risk">
+        <div class="riskrow"><span>Missed</span><div class="track"><div class="fill r" style="width:20%"></div></div><b>22</b></div>
+        <div class="riskrow"><span>High Risk</span><div class="track"><div class="fill r" style="width:17%"></div></div><b>19</b></div>
+        <div class="riskrow"><span>Medium Risk</span><div class="track"><div class="fill a" style="width:18%"></div></div><b>20</b></div>
+        <div class="riskrow"><span>On Track</span><div class="track"><div class="fill g" style="width:100%"></div></div><b>112</b></div>
       </div>
-    </div>
+      <div class="riskfoot"><b>61 at risk</b> = Missed + High + Medium. Counts use <code>openings_position</code>, not requisition count. Pipeline strength does not override TOAD risk.</div>
+    </section>
+  </div>
 
-    <div class="kpi alert">
-      <div class="chead"><h3>Open Positions at Risk</h3><span class="info"></span></div>
-      <p class="def">Days to TOAD: overdue &lt; 0 days; high 0–7; medium 8–14; on track 15+</p>
-      <div class="val"><b>56</b><span>16.4% of 341 open</span></div>
-      <div class="delta" style="color:var(--red)"><span class="tri up"></span><em>+6.4 pp</em><small>vs threshold ≤ 10%</small></div>
-      <div class="sev">
-        <i style="width:46.4%;background:var(--red)"></i>
-        <i style="width:32.1%;background:#EF4444"></i>
-        <i style="width:21.4%;background:var(--orange)"></i>
-      </div>
-      <p class="sevlab">26 overdue &middot; 18 high &middot; 12 medium</p>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>Anchored on TOAD</p>
-        <svg width="52" height="15" viewBox="0 0 80 22" fill="none">
-          <polyline points="0,16.5 16,15.1 32,12.6 48,10.8 64,7.3 80,4.4"
-            stroke="#DC2626" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
-
-    <div class="kpi">
-      <div class="chead"><h3>Time to Fill</h3><span class="info"></span></div>
-      <p class="def">Req approved → offer accepted, median across hires in period</p>
-      <div class="val"><b>41</b><span>days</span></div>
-      <div class="delta" style="color:var(--amber-d)"><span class="tri up"></span><em>+1 day</em><small>vs FY Target 40 days</small></div>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>PYTD: 47 days</p>
-        <svg width="52" height="15" viewBox="0 0 80 22" fill="none">
-          <polyline points="0,6.6 11.4,7.7 22.9,7 34.3,8.8 45.7,9.9 57.1,11 68.6,12.1 80,12.8"
-            stroke="#16A34A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
-
-    <div class="kpi">
-      <div class="chead"><h3>60-Day Early Attrition</h3><span class="info"></span></div>
-      <p class="def">Rolling 12 months of fully matured start cohorts</p>
-      <div class="val"><b>4.2%</b><span>104 of 2,468</span></div>
-      <div class="delta" style="color:var(--red)"><span class="tri up"></span><em>+1.2 pp</em><small>vs FY Target ≤ 3.0%</small></div>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>Prior 12M: 3.3%</p>
-        <button class="jump" type="button" onclick="goto('attrition')">Early Attrition
-          <svg width="5" height="9" viewBox="0 0 5 9"><path d="M0.5 0.5 L4 4.5 L0.5 8.5" fill="none" stroke="#334155" stroke-width="1.5"/></svg>
-        </button>
-      </div>
-    </div>
-
-  </section>
-
-  <!-- body -->
-  <section class="row">
-
-    <div class="col" style="flex:1.42">
-
-      <!-- funnel -->
-      <div class="card" style="flex:1;min-height:0;display:flex;flex-direction:column">
-        <div class="chead">
-          <div class="ctitle">Recruitment Funnel &amp; Stage Timing<span class="info"></span></div>
-          <a class="link" href="#">View funnel detail</a>
-        </div>
-        <p class="sub">Base: 20,918 applications, Jan 1 – May 31, 2026. Funnel ends at Offer Accepted; the 1,556 acceptances have produced 1,418 starts, with 138 accepted candidates awaiting start.</p>
-
-        <table>
-          <thead>
-            <tr>
-              <th>STAGE</th><th>CANDIDATES</th>
-              <th>STAGE → STAGE</th><th>TARGET CONV.</th>
-              <th>CUMULATIVE</th><th>MEDIAN DAYS</th><th>SLA DAYS</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="stage"><div class="stagecell"><i></i><span>Application Received</span></div></td>
-              <td><div class="barcell"><i style="width:118px"></i><b>20,918</b></div></td>
-              <td class="num">—</td><td class="tgt">—</td>
-              <td class="cum">100%</td><td class="days">6</td><td class="tgt">5</td>
-            </tr>
-            <tr>
-              <td class="stage"><div class="stagecell"><i></i><span>Recruiter Screen</span></div></td>
-              <td><div class="barcell"><i style="width:71px"></i><b>12,655</b></div></td>
-              <td class="num">60.5%</td><td class="tgt">55.0%</td>
-              <td class="cum">60.5%</td><td class="days">3</td><td class="tgt">4</td>
-            </tr>
-            <tr>
-              <td class="stage"><div class="stagecell"><i></i><span>Assessment</span></div></td>
-              <td><div class="barcell"><i style="width:49px"></i><b>8,618</b></div></td>
-              <td class="num">68.1%</td><td class="tgt">70.0%</td>
-              <td class="cum">41.2%</td><td class="days">4</td><td class="tgt">5</td>
-            </tr>
-            <tr class="flag">
-              <td class="stage"><div class="stagecell"><i></i><span>Interview</span><span class="tag">BOTTLENECK</span></div></td>
-              <td><div class="barcell"><i style="width:27px;background:var(--red)"></i><b>4,770</b></div></td>
-              <td class="num hot">55.3%</td><td class="tgt">65.0%</td>
-              <td class="cum">22.8%</td><td class="days hot">15</td><td class="tgt">12</td>
-            </tr>
-            <tr>
-              <td class="stage"><div class="stagecell"><i></i><span>Reference Check</span></div></td>
-              <td><div class="barcell"><i style="width:20px"></i><b>3,473</b></div></td>
-              <td class="num">72.8%</td><td class="tgt">75.0%</td>
-              <td class="cum">16.6%</td><td class="days">3</td><td class="tgt">4</td>
-            </tr>
-            <tr>
-              <td class="stage"><div class="stagecell"><i></i><span>Offer Extended</span></div></td>
-              <td><div class="barcell"><i style="width:12px"></i><b>2,154</b></div></td>
-              <td class="num">62.0%</td><td class="tgt">65.0%</td>
-              <td class="cum">10.3%</td><td class="days">5</td><td class="tgt">4</td>
-            </tr>
-            <tr>
-              <td class="stage"><div class="stagecell"><i></i><span>Offer Accepted</span></div></td>
-              <td><div class="barcell"><i style="width:9px"></i><b>1,556</b></div></td>
-              <td class="num mid">72.2%</td><td class="tgt">80.0%</td>
-              <td class="cum">7.4%</td><td class="days">5</td><td class="tgt">6</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <p class="tablenote">Stage medians use separate populations and do not add up to the 41-day median Time to Fill; targets are per-stage SLAs.</p>
-
-        <div class="callout" style="margin-top:auto">
-          <i></i>
-          <div>
-            <b>Bottleneck: Interview</b>
-            <span> — slowest stage at a 15-day median against a 12-day SLA, and the weakest conversion at 55.3% against a 65% target (−9.7 pp).</span>
-            <p>Median up 4 days vs PYTD; driver is hiring manager feedback turnaround. Owner: hiring managers, not TA.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- fill rate trend -->
-      <div class="card" style="flex:none">
-        <div class="chead">
-          <div class="ctitle" style="font-size:11.5px">Fill Rate Trend<span class="info"></span></div>
-          <span class="badge">PIPELINE YIELD</span>
-        </div>
-        <p class="sub">Cumulative positions filled &divide; positions due by Target Hire Date (THD), from Jan 1. Forecast = actual fills + expected fills from the active candidate pipeline, weighted by historical stage-to-fill yield for Business Unit &times; Job Family &times; Job Level and capped by remaining open positions.</p>
-
-        <svg viewBox="0 0 700 143" width="100%" style="margin-top:4px;overflow:visible">
-          <g stroke="#F1F5F9" stroke-width="1">
-            <line x1="34" y1="8" x2="690" y2="8"/><line x1="34" y1="36" x2="690" y2="36"/>
-            <line x1="34" y1="64" x2="690" y2="64"/><line x1="34" y1="92" x2="690" y2="92"/>
-            <line x1="34" y1="120" x2="690" y2="120"/>
-          </g>
-          <g font-size="8" fill="#94A3B8" text-anchor="end">
-            <text x="30" y="11">100%</text><text x="30" y="39">75%</text>
-            <text x="30" y="67">50%</text><text x="30" y="95">25%</text><text x="30" y="123">0%</text>
-          </g>
-
-          <line x1="34" y1="19.2" x2="690" y2="19.2" stroke="#94A3B8" stroke-width="1.2" stroke-dasharray="5 4"/>
-          <text x="37" y="16" font-size="7.5" font-weight="600" fill="#64748B">FY Target 90%</text>
-          <line x1="272.5" y1="8" x2="272.5" y2="120" stroke="#CBD5E1" stroke-width="1" stroke-dasharray="3 3"/>
-
-          <polyline points="272.5,32.1 332.2,30.4 391.8,28.2 451.5,25.9 511.1,24.2 570.7,22.6 630.4,20.9 690,19.8"
-                    fill="none" stroke="#1D4ED8" stroke-width="1.6" stroke-dasharray="5 4"/>
-          <polyline points="34,43.8 93.6,40.5 153.3,37.1 212.9,34.9 272.5,32.1"
-                    fill="none" stroke="#16A34A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-
-          <g fill="#16A34A">
-            <circle cx="34" cy="43.8" r="2.2"/><circle cx="93.6" cy="40.5" r="2.2"/><circle cx="153.3" cy="37.1" r="2.2"/>
-            <circle cx="212.9" cy="34.9" r="2.2"/><circle cx="272.5" cy="32.1" r="2.2"/>
-          </g>
-          <g fill="#fff" stroke="#1D4ED8" stroke-width="1.2">
-            <circle cx="332.2" cy="30.4" r="2"/><circle cx="391.8" cy="28.2" r="2"/><circle cx="451.5" cy="25.9" r="2"/>
-            <circle cx="511.1" cy="24.2" r="2"/><circle cx="570.7" cy="22.6" r="2"/><circle cx="630.4" cy="20.9" r="2"/>
-            <circle cx="690" cy="19.8" r="2"/>
-          </g>
-
-          <text x="34" y="38" font-size="8.5" font-weight="700" fill="#15803D">68%</text>
-          <text x="272.5" y="26" font-size="8.5" font-weight="700" fill="#15803D" text-anchor="middle">78.5%</text>
-          <text x="690" y="14" font-size="8.5" font-weight="700" fill="#1D4ED8" text-anchor="end">89.5%</text>
-
-          <g font-size="8" fill="#94A3B8" text-anchor="middle">
-            <text x="34" y="135" text-anchor="start">Jan</text><text x="93.6" y="135">Feb</text>
-            <text x="153.3" y="135">Mar</text><text x="212.9" y="135">Apr</text><text x="272.5" y="135">May</text>
-            <text x="332.2" y="135">Jun</text><text x="391.8" y="135">Jul</text><text x="451.5" y="135">Aug</text>
-            <text x="511.1" y="135">Sep</text><text x="570.7" y="135">Oct</text><text x="630.4" y="135">Nov</text>
-            <text x="690" y="135" text-anchor="end">Dec</text>
-          </g>
-        </svg>
-      </div>
-
-    </div>
-
-    <!-- at risk + constraints -->
-    <div class="col" style="flex:1">
-      <div class="card" style="flex:1;min-height:0;display:flex;flex-direction:column">
-        <div class="chead">
-          <div class="ctitle">Open Positions At Risk &amp; Constraints<span class="info"></span></div>
-          <a class="link" href="#">View detail</a>
-        </div>
-        <p class="sub">Portfolio snapshot: 56 of 341 open positions (16.4%) across 30 of 179 open requisitions as of May 31, 2026. Open positions are the sum of openings_position on open requisitions, including future THDs through May 2027. The Date Range slicer does not apply. Risk is based only on Target Offer Acceptance Date (TOAD): Days to TOAD = TOAD − as-of date.</p>
-
-        <div class="colhead"><b>RISK LEVEL — DAYS TO TOAD</b><span>positions &middot; % of open</span></div>
-
-        <div class="band">
-          <div class="bandtop">
-            <div class="bandname"><i style="background:var(--red)"></i><b>Overdue</b><span>TOAD already passed</span></div>
-            <div class="bandval"><b>26</b><span>7.6%</span></div>
-          </div>
-          <div class="track"><i style="width:100%;background:var(--red)"></i></div>
-        </div>
-
-        <div class="band">
-          <div class="bandtop">
-            <div class="bandname"><i style="background:#EF4444"></i><b>High</b><span>0–7 days to TOAD</span></div>
-            <div class="bandval"><b>18</b><span>5.3%</span></div>
-          </div>
-          <div class="track"><i style="width:69.2%;background:#EF4444"></i></div>
-        </div>
-
-        <div class="band">
-          <div class="bandtop">
-            <div class="bandname"><i style="background:var(--orange)"></i><b>Medium</b><span>8–14 days to TOAD</span></div>
-            <div class="bandval"><b>12</b><span>3.5%</span></div>
-          </div>
-          <div class="track"><i style="width:46.2%;background:var(--orange)"></i></div>
-        </div>
-
-        <p class="tablenote">At Risk = Overdue + High + Medium based only on Days to TOAD. On Track = 15+ days to TOAD. Constraints below are diagnostics and do not classify risk.</p>
-
-        <div class="rule" style="margin-top:7px"></div>
-
-        <div class="colhead"><b>PRIMARY HIRING CONSTRAINT</b><span>positions &middot; % of at risk</span></div>
-
-        <div class="con">
-          <div class="contop"><span>Hiring manager delays</span><b>14<em>25%</em></b></div>
-          <div class="ctrack"><i style="width:100%"><em style="width:57%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>Low candidate pipeline</span><b>12<em>21%</em></b></div>
-          <div class="ctrack"><i style="width:85.7%"><em style="width:50%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>Hard-to-fill / niche skills</span><b>10<em>18%</em></b></div>
-          <div class="ctrack"><i style="width:71.4%"><em style="width:50%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>Interview scheduling delays</span><b>7<em>13%</em></b></div>
-          <div class="ctrack"><i style="width:50%"><em style="width:43%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>Compensation constraints</span><b>5<em>9%</em></b></div>
-          <div class="ctrack"><i style="width:35.7%"><em style="width:40%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>High candidate fallout</span><b>4<em>7%</em></b></div>
-          <div class="ctrack"><i style="width:28.6%"><em style="width:25%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>Offer approval delays</span><b>3<em>5%</em></b></div>
-          <div class="ctrack"><i style="width:21.4%"><em style="width:33%"></em></i></div>
-        </div>
-        <div class="con">
-          <div class="contop"><span>Background check delays</span><b>1<em>2%</em></b></div>
-          <div class="ctrack"><i style="width:7.1%"></i></div>
-        </div>
-
-        <div class="legend">
-          <div><i class="blk" style="background:var(--red)"></i>Already overdue</div>
-          <div><i class="blk" style="background:var(--navy-2)"></i>Within 14 days of TOAD</div>
-        </div>
-
-        <div class="rule" style="margin-top:auto"></div>
-        <div class="riskfoot">
-          <p>Position counts inherit one primary constraint from their requisition.</p>
-          <div>
-            <span class="tri up" style="color:var(--red)"></span>
-            <b style="color:var(--red);font-weight:600">2.8 pp</b>
-            <span style="color:var(--mute)">vs PYTD 13.6%</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </section>
-
-</main>
-
-<!-- ============ PAGE 2 — EARLY ATTRITION ============ -->
-<main class="main page" id="page-attrition">
-
-  <header class="top">
-    <div>
-      <h1>Early Attrition</h1>
-      <p class="tagline">New-hire retention in the first 60 days and what drives it</p>
-      <p class="basis"><b></b>A cohort matures once every hire in it has reached day 60. The latest matured cohort is derived from the data date — Mar 2026 as of May 31, 2026 — and rolls forward automatically.</p>
-    </div>
-    <div class="filters">
-      <div class="filter"><label>Cohort Window</label>
-        <div>Apr 2025 – Mar 2026 (auto)
-          <svg width="8" height="5" viewBox="0 0 9 5"><path d="M0 0 L4.5 4.5 L9 0" fill="none" stroke="#64748B" stroke-width="1.5"/></svg>
-        </div>
-      </div>
-      <div class="filter"><label>Business Unit</label>
-        <div>All
-          <svg width="8" height="5" viewBox="0 0 9 5"><path d="M0 0 L4.5 4.5 L9 0" fill="none" stroke="#64748B" stroke-width="1.5"/></svg>
-        </div>
-      </div>
-      <div class="filter"><label>Job Family</label>
-        <div>All
-          <svg width="8" height="5" viewBox="0 0 9 5"><path d="M0 0 L4.5 4.5 L9 0" fill="none" stroke="#64748B" stroke-width="1.5"/></svg>
-        </div>
-      </div>
-      <div class="stamp">Data as of: May 31, 2026<i></i></div>
-    </div>
-  </header>
-
-  <section class="kpis three">
-
-    <div class="kpi">
-      <div class="chead"><h3>60-Day Early Attrition</h3><span class="info"></span></div>
-      <p class="def">Rolling 12 months — new hires leaving within 60 days of start</p>
-      <div class="val"><b>4.2%</b><span>104 of 2,468 hires</span></div>
-      <div class="delta" style="color:var(--red)"><span class="tri up"></span><em>+1.2 pp</em><small>vs FY Target ≤ 3.0%</small></div>
-      <div class="delta sec" style="color:var(--red)"><span class="tri up"></span><em>+0.9 pp</em><small>vs prior 12M 3.3%</small></div>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>Prior 12M: 79 of 2,390 hires</p>
-        <svg width="52" height="15" viewBox="0 0 80 22" fill="none">
-          <polyline points="0,14.3 11.4,13.2 22.9,12.1 34.3,11 45.7,9.2 57.1,8.4 68.6,6.6 80,5.5"
-            stroke="#DC2626" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
-
-    <div class="kpi">
-      <div class="chead"><h3>Latest Matured Cohort</h3><span class="info"></span></div>
-      <p class="def">Mar 2026 starts — most recent cohort where every hire reached day 60</p>
-      <div class="val"><b>6.2%</b><span>17 of 276 hires</span></div>
-      <div class="delta" style="color:var(--red)"><span class="tri up"></span><em>+3.2 pp</em><small>vs FY Target ≤ 3.0%</small></div>
-      <div class="delta sec" style="color:var(--red)"><span class="tri up"></span><em>+1.0 pp</em><small>vs Feb cohort 5.2%</small></div>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>Cohort selected automatically</p>
-        <svg width="52" height="15" viewBox="0 0 80 22" fill="none">
-          <polyline points="0,13.6 16,15.4 32,12.5 48,10.7 64,6.9 80,3.3"
-            stroke="#DC2626" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
-
-    <div class="kpi alert">
-      <div class="chead"><h3>TA-Related Early Attrition</h3><span class="info"></span></div>
-      <p class="def">Coded TA-related exits &divide; matured-cohort hires, rolling 12 months</p>
-      <div class="val"><b>2.5%</b><span>61 of 2,468 hires</span></div>
-      <div class="delta" style="color:var(--red)"><span class="tri up"></span><em>+1.3 pp</em><small>vs FY Target ≤ 1.2%</small></div>
-      <div class="delta sec" style="color:var(--red)"><span class="tri up"></span><em>+0.6 pp</em><small>vs prior 12M 1.9%</small></div>
-      <div class="rule" style="margin-top:8px"></div>
-      <div class="foot">
-        <p>61 of 104 exits &middot; 8 uncoded excluded</p>
-        <svg width="52" height="15" viewBox="0 0 80 22" fill="none">
-          <polyline points="0,12.1 20,11.2 40,9.4 60,7.5 80,5.9"
-            stroke="#DC2626" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-    </div>
-
-  </section>
-
-  <section class="row">
-    <div class="card" style="flex:1;min-width:0;display:flex;flex-direction:column">
-      <div class="chead">
-        <div class="ctitle">60-Day Early Attrition — Cohorts &amp; Reasons<span class="info"></span></div>
-        <a class="link" href="#">View leaver detail</a>
-      </div>
-      <p class="sub">104 of 2,468 new hires left within 60 days (4.2%). Rolling 12 months of fully matured cohorts, Apr 2025 – Mar 2026 starts; Apr and May 2026 starts are excluded until they reach day 60. Reason coding covers 96 of 104 exits (92.3%) — uncoded exits stay in the rate but sit outside the TA / non-TA split, so shares are not overstated.</p>
-
-      <div class="split" style="flex:1">
-
-        <!-- cohort trend -->
-        <div style="flex:1.1">
-          <div class="colhead"><b>NEW-HIRE COHORT BY START MONTH</b><span>% leaving within 60 days</span></div>
-
-          <div class="legend">
-            <div><i class="blk" style="background:var(--bar)"></i>Within watch level</div>
-            <div><i class="blk" style="background:var(--red)"></i>Above 5.0% watch level</div>
-            <div><i style="background:var(--mute-2);opacity:.7"></i>FY target ≤ 3.0%</div>
-            <div><i style="background:var(--bar)"></i>Rolling 12M 4.2%</div>
-          </div>
-
-          <svg viewBox="0 0 460 200" width="100%" style="margin-top:4px;overflow:visible">
-            <g stroke="#F1F5F9" stroke-width="1">
-              <line x1="34" y1="12" x2="452" y2="12"/><line x1="34" y1="49" x2="452" y2="49"/>
-              <line x1="34" y1="86" x2="452" y2="86"/><line x1="34" y1="123" x2="452" y2="123"/>
-            </g>
-            <line x1="34" y1="160" x2="452" y2="160" stroke="#CBD5E1" stroke-width="1"/>
-            <g font-size="8.5" fill="#94A3B8" text-anchor="end">
-              <text x="28" y="15">8%</text><text x="28" y="52">6%</text>
-              <text x="28" y="89">4%</text><text x="28" y="126">2%</text><text x="28" y="163">0%</text>
-            </g>
-
-            <line x1="34" y1="104.5" x2="452" y2="104.5" stroke="#94A3B8" stroke-width="1.3" stroke-dasharray="5 4"/>
-
-            <line x1="34" y1="82.1" x2="452" y2="82.1" stroke="#1E3A5F" stroke-width="1.1" stroke-dasharray="3 3"/>
-
-            <g fill="#1E3A5F">
-              <rect x="39.4" y="97.1" width="24" height="62.9" rx="2"/>
-              <rect x="74.3" y="104.5" width="24" height="55.5" rx="2"/>
-              <rect x="109.1" y="93.4" width="24" height="66.6" rx="2"/>
-              <rect x="143.9" y="87.9" width="24" height="72.1" rx="2"/>
-              <rect x="178.7" y="91.6" width="24" height="68.4" rx="2"/>
-              <rect x="213.6" y="82.3" width="24" height="77.7" rx="2"/>
-              <rect x="248.4" y="86" width="24" height="74" rx="2"/>
-              <rect x="283.2" y="86" width="24" height="74" rx="2"/>
-              <rect x="318" y="95.3" width="24" height="64.7" rx="2"/>
-              <rect x="352.9" y="76.8" width="24" height="83.2" rx="2"/>
-            </g>
-            <g fill="#DC2626">
-              <rect x="387.7" y="63.8" width="24" height="96.2" rx="2"/>
-              <rect x="422.5" y="45.3" width="24" height="114.7" rx="2"/>
-            </g>
-
-            <g font-size="7.5" font-weight="700" fill="#334155" text-anchor="middle">
-              <text x="51.4" y="92">3.4</text><text x="86.3" y="99">3.0</text><text x="121.1" y="88">3.6</text>
-              <text x="155.9" y="83">3.9</text><text x="190.7" y="86">3.7</text><text x="225.6" y="77">4.2</text>
-              <text x="260.4" y="81">4.0</text><text x="295.2" y="81">4.0</text><text x="330" y="90">3.5</text>
-              <text x="364.9" y="71">4.5</text>
-            </g>
-            <g font-size="8" font-weight="700" fill="#991B1B" text-anchor="middle">
-              <text x="399.7" y="58">5.2</text><text x="434.5" y="39">6.2</text>
-            </g>
-
-            <g font-size="8" font-weight="600" fill="#fff" text-anchor="middle">
-              <text x="51.4" y="153">6</text><text x="86.3" y="153">5</text><text x="121.1" y="153">7</text>
-              <text x="155.9" y="153">8</text><text x="190.7" y="153">7</text><text x="225.6" y="153">9</text>
-              <text x="260.4" y="153">8</text><text x="295.2" y="153">8</text><text x="330" y="153">6</text>
-              <text x="364.9" y="153">11</text><text x="399.7" y="153">12</text><text x="434.5" y="153">17</text>
-            </g>
-
-            <g font-size="8" font-weight="500" fill="#475569" text-anchor="middle">
-              <text x="51.4" y="175">Apr</text><text x="86.3" y="175">May</text><text x="121.1" y="175">Jun</text>
-              <text x="155.9" y="175">Jul</text><text x="190.7" y="175">Aug</text><text x="225.6" y="175">Sep</text>
-              <text x="260.4" y="175">Oct</text><text x="295.2" y="175">Nov</text><text x="330" y="175">Dec</text>
-              <text x="364.9" y="175">Jan</text><text x="399.7" y="175">Feb</text><text x="434.5" y="175">Mar</text>
-            </g>
-            <g font-size="8" fill="#94A3B8">
-              <text x="34" y="190">2025 start cohorts</text>
-              <text x="452" y="190" text-anchor="end">2026 start cohorts</text>
-            </g>
-          </svg>
-
-          <p class="tablenote">Label inside each bar is the number of leavers within 60 days; 2,468 hires across the 12 matured cohorts. The rate has risen in each of the last three cohorts, from 3.5% to 6.2%.</p>
-        </div>
-
-        <!-- reasons -->
-        <div class="rightcol">
-          <div class="colhead"><b>REASON FOR LEAVING</b><span>104 exits &middot; 96 coded (92.3%)</span></div>
-
-          <div class="tabar">
-            <i style="width:58.7%;background:var(--red)"></i>
-            <i style="width:33.6%;background:var(--mute-2)"></i>
-            <i style="width:7.7%;background:#CBD5E1"></i>
-          </div>
-          <div class="tasplit">
-            <div><i style="background:var(--red)"></i>TA-related 61</div>
-            <div><i style="background:var(--mute-2)"></i>Not TA-related 35</div>
-            <div><i style="background:#CBD5E1"></i>Unknown 8</div>
-          </div>
-
-          <div class="grp"><b style="color:var(--red-d)">TA-RELATED — 61 of 104 (58.6%)</b><span>matching, expectation setting, candidate communication</span></div>
-
-          <div class="con">
-            <div class="contop"><span>Role / job expectation mismatch</span><b>21<em>20.2%</em></b></div>
-            <div class="ctrack"><i style="width:100%;background:var(--red)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Compensation expectation mismatch</span><b>15<em>14.4%</em></b></div>
-            <div class="ctrack"><i style="width:71.4%;background:var(--red)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Work arrangement / location mismatch</span><b>12<em>11.5%</em></b></div>
-            <div class="ctrack"><i style="width:57.1%;background:var(--red)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Schedule / shift mismatch</span><b>8<em>7.7%</em></b></div>
-            <div class="ctrack"><i style="width:38.1%;background:var(--red)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Expectation setting during hiring</span><b>5<em>4.8%</em></b></div>
-            <div class="ctrack"><i style="width:23.8%;background:var(--red)"></i></div>
-          </div>
-
-          <div class="grp"><b style="color:var(--mute)">NOT TA-RELATED — 35 of 104 (33.7%)</b><span>owned outside recruitment</span></div>
-
-          <div class="con">
-            <div class="contop"><span>Onboarding / manager experience</span><b>13<em>12.5%</em></b></div>
-            <div class="ctrack"><i style="width:61.9%;background:var(--mute-2)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Performance / capability gap</span><b>9<em>8.7%</em></b></div>
-            <div class="ctrack"><i style="width:42.9%;background:var(--mute-2)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Personal / health / other</span><b>8<em>7.7%</em></b></div>
-            <div class="ctrack"><i style="width:38.1%;background:var(--mute-2)"></i></div>
-          </div>
-          <div class="con">
-            <div class="contop"><span>Counter-offer from former employer</span><b>5<em>4.8%</em></b></div>
-            <div class="ctrack"><i style="width:23.8%;background:var(--mute-2)"></i></div>
-          </div>
-
-          <div class="grp"><b style="color:var(--mute-2)">UNKNOWN — 8 of 104 (7.7%)</b><span>no exit interview or reason not coded</span></div>
-        </div>
-
-      </div>
-
-      <div class="callout">
-        <i></i>
+  <div class="row r2">
+    <section class="card s4">
+      <div class="ctitle">Pipeline Health & Hiring Constraints</div><div class="sub">Where candidates are concentrated and what is blocking open demand.</div>
+      <div class="split">
         <div>
-          <b>Recruitment-quality signal: expectation mismatch</b>
-          <span> — role, pay and work-arrangement mismatches account for 48 of 104 early exits (46.2%), the group most associated with expectation setting in hiring.</span>
-          <p>Concentrated in the Mar-2026 Operations cohort, where 9 of 17 leavers cited shift pattern or pay band. Suggested action: confirm pay band, shift pattern and site at recruiter screen, and re-confirm at offer.</p>
+          <div class="minihead">ACTIVE FUNNEL</div>
+          <div class="funnel">
+            <div class="stage"><b>620</b><div class="bar" style="height:88px">620</div><span>Review</span></div><div class="conv">46%</div>
+            <div class="stage"><b>286</b><div class="bar" style="height:69px">286</div><span>Screen</span></div><div class="conv">61%</div>
+            <div class="stage"><b>175</b><div class="bar" style="height:54px">175</div><span>Assess</span></div><div class="conv">54%</div>
+            <div class="stage"><b>95</b><div class="bar" style="height:40px">95</div><span>Interview</span></div><div class="conv">43%</div>
+            <div class="stage"><b>41</b><div class="bar" style="height:25px">41</div><span>Offer</span></div>
+          </div>
+          <div class="flagbox"><b>Watch:</b> Interview → Offer shows the weakest completed historical conversion in this example. Active candidates are not treated as failed conversions.</div>
+        </div>
+        <div>
+          <div class="minihead">OPEN POSITIONS BY PRIMARY CONSTRAINT</div>
+          <div class="con"><span>Qualified candidates</span><div class="ctrack"><i style="width:100%"></i></div><b>48</b></div>
+          <div class="con"><span>Hiring manager delay</span><div class="ctrack"><i style="width:73%"></i></div><b>35</b></div>
+          <div class="con"><span>Compensation</span><div class="ctrack"><i style="width:52%"></i></div><b>25</b></div>
+          <div class="con"><span>Interview capacity</span><div class="ctrack"><i style="width:38%"></i></div><b>18</b></div>
+          <div class="con"><span>Niche skills</span><div class="ctrack"><i style="width:29%"></i></div><b>14</b></div>
+          <div class="con"><span>No material constraint</span><div class="ctrack"><i style="width:69%;background:var(--green)"></i></div><b>33</b></div>
+          <div class="sub" style="margin-top:7px">Constraint is requisition-level and weighted by open positions, so multi-position requisitions carry the correct executive impact.</div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-</main>
+    <section class="card s8 qualitychart">
+      <div class="chead"><div><div class="ctitle">Speed vs 60-Day Early Attrition</div><div class="sub">Median Time to Fill and 60-Day Early Attrition for the same fully matured employee-start cohorts.</div></div><div class="legend"><span><i class="sw"></i>Time to Fill · left axis</span><span><i class="sw red"></i>60-Day Attrition · right axis</span></div></div>
+      <div class="plot">
+        <svg viewBox="0 0 790 205" aria-label="Illustrative dual axis chart of time to fill versus 60-day attrition">
+          <line x1="45" y1="20" x2="45" y2="166" class="axisline"/><line x1="748" y1="20" x2="748" y2="166" class="axisline"/><line x1="45" y1="166" x2="748" y2="166" class="axisline"/>
+          <line x1="45" y1="47" x2="748" y2="47" class="grid"/><line x1="45" y1="86" x2="748" y2="86" class="grid"/><line x1="45" y1="125" x2="748" y2="125" class="grid"/>
+          <text x="4" y="25" class="axis">55 d</text><text x="4" y="64" class="axis">45 d</text><text x="4" y="103" class="axis">35 d</text><text x="4" y="142" class="axis">25 d</text>
+          <text x="757" y="25" class="axis">14%</text><text x="757" y="64" class="axis">10%</text><text x="757" y="103" class="axis">6%</text><text x="757" y="142" class="axis">2%</text>
+          <path d="M65 58 L125 66 L185 77 L245 71 L305 88 L365 95 L425 102 L485 98 L545 111 L605 106 L665 117 L725 122" class="blue"/>
+          <path d="M65 98 L125 91 L185 104 L245 95 L305 107 L365 112 L425 109 L485 118 L545 114 L605 124 L665 121 L725 128" class="redline"/>
+          <g class="ptb"><circle cx="65" cy="58" r="2.6"/><circle cx="125" cy="66" r="2.6"/><circle cx="185" cy="77" r="2.6"/><circle cx="245" cy="71" r="2.6"/><circle cx="305" cy="88" r="2.6"/><circle cx="365" cy="95" r="2.6"/><circle cx="425" cy="102" r="2.6"/><circle cx="485" cy="98" r="2.6"/><circle cx="545" cy="111" r="2.6"/><circle cx="605" cy="106" r="2.6"/><circle cx="665" cy="117" r="2.6"/><circle cx="725" cy="122" r="2.6"/></g>
+          <g class="ptr"><circle cx="65" cy="98" r="2.6"/><circle cx="125" cy="91" r="2.6"/><circle cx="185" cy="104" r="2.6"/><circle cx="245" cy="95" r="2.6"/><circle cx="305" cy="107" r="2.6"/><circle cx="365" cy="112" r="2.6"/><circle cx="425" cy="109" r="2.6"/><circle cx="485" cy="118" r="2.6"/><circle cx="545" cy="114" r="2.6"/><circle cx="605" cy="124" r="2.6"/><circle cx="665" cy="121" r="2.6"/><circle cx="725" cy="128" r="2.6"/></g>
+          <text x="51" y="184" class="axis">Apr 25</text><text x="112" y="184" class="axis">May</text><text x="172" y="184" class="axis">Jun</text><text x="232" y="184" class="axis">Jul</text><text x="292" y="184" class="axis">Aug</text><text x="352" y="184" class="axis">Sep</text><text x="412" y="184" class="axis">Oct</text><text x="472" y="184" class="axis">Nov</text><text x="532" y="184" class="axis">Dec</text><text x="592" y="184" class="axis">Jan 26</text><text x="655" y="184" class="axis">Feb</text><text x="716" y="184" class="axis">Mar</text>
+        </svg>
+      </div>
+      <div class="qualitynote"><b>Cohort rule:</b> each point uses hires who started in that month and completed the full 60-day observation window by 31 May 2026. Time to Fill is re-cohorted to those same hires. Expose cohort size and flag or suppress low-volume months using a configured minimum sample-size rule. The chart shows association, not causation.</div>
+    </section>
+  </div>
 
+  <div class="footer"><span><b>Executive story:</b> demand → delivery → risk → pipeline → expected outcome → quality.</span><span><b>Model guardrail:</b> position quantities must not be duplicated by candidate-level joins; quality uses matured start cohorts while demand metrics use THD.</span></div>
 </div>
-
-<script>
-function goto(page){
-  var pages = document.querySelectorAll('.page');
-  for (var i = 0; i < pages.length; i++){
-    pages[i].className = 'main page' + (pages[i].id === 'page-' + page ? ' on' : '');
-  }
-  document.getElementById('nav-exec').className = 'nav' + (page === 'exec' ? ' on' : '');
-  document.getElementById('nav-attrition').className = 'nav' + (page === 'attrition' ? ' on' : '');
-}
-</script>
 </body>
 </html>
