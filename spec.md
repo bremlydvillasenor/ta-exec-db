@@ -1,651 +1,831 @@
-# Metric Definitions — TA Analytics
+# TA Executive Analytics — Project Specification
 
-**Scope:** Executive Summary and Early Attrition pages.
-**Audience:** VP / Head of Talent Acquisition, business unit leaders, HR business partners, and the analytics team that maintains the model.
+## 1. Project overview
 
-**Purpose of this document.** This is the governed business dictionary for the dashboard. For each metric it defines what the number means, how it is calculated, what it deliberately excludes, and what decision it supports.
+This project builds the analytics-ready data layer for a **Talent Acquisition Executive Summary** report in Power BI.
 
-**This document defines metrics. It does not report values.** No observed result appears here. Figures shown on the dashboard change every time the data is refreshed; the definitions do not. Keeping them apart means this document stays correct without maintenance, and it can be handed to a new analyst, a reviewer or a model as a standalone contract.
+The project is intentionally limited to the **Executive Summary page only**. It should provide a small, governed set of dimensions, facts, marts, metric definitions, and validation rules needed to answer the most important questions a TA executive asks about hiring delivery, open-position risk, pipeline health, and expected future attainment.
 
-All configured numbers — targets, thresholds, risk bands, observation windows, service levels — are collected in section 8 and sourced from configuration, not from this text.
+The project is designed as a portfolio-quality analytics engineering example. The priority is not to reproduce every possible recruiting metric. The priority is to demonstrate a clear business problem, trustworthy metric logic, realistic data relationships, reproducible transformations, and Power BI-ready outputs.
 
-**Status: authoritative.** This document is the single source of truth for metric definitions. Where it conflicts with the project specification, the dashboard wireframe, the semantic model or any DAX measure, this document wins and the other artefact is corrected. Definitions change here first, then propagate.
+### Audience
 
-**Reproducibility.** All logic that depends on "today", "current", "latest" or "open" is evaluated against a fixed reporting as-of date held in configuration. System time is never used. The same pipeline run in any future month returns the same result.
+Primary users:
 
----
+- VP / Head of Talent Acquisition
+- TA leaders and recruiting operations leaders
+- Business unit leaders
+- People / Workforce Analytics teams
 
-## 1. How to read each metric entry
+Secondary users:
 
-Every metric below uses the same structure:
-
-| Section | What it tells you |
-|---|---|
-| **Business question** | The question a leader is actually asking |
-| **Plain-English definition** | One or two sentences, no formulas |
-| **Formula** | Numerator ÷ denominator, or the calculation logic |
-| **Date basis** | Which date decides whether a record belongs to the period |
-| **Population** | Which records are counted, and at what grain |
-| **Excluded** | What is deliberately left out, and why |
-| **Comparison** | What the metric is measured against |
-| **How to read it** | What good and bad look like |
-| **Common misreadings** | The mistakes this metric invites |
-| **Where to go next** | The drill path for investigation |
+- Analytics engineers
+- BI developers
+- Reviewers evaluating the project as a portfolio artifact
 
 ---
 
-## 2. Shared concepts
+## 2. Project objective
 
-These concepts apply across several metrics. Read this section once and the rest of the document becomes much easier.
+The Executive Summary should allow a TA leader to answer five questions quickly:
 
-**Requisition vs position.** A requisition is the hiring request. A position is one seat to be filled. One requisition can hold several positions, for example one requisition to hire a group of contact centre agents. Almost every metric on the Executive Summary Page counts **positions**, not requisitions, because leaders are accountable for positions filled. Where a metric counts requisitions, it says so explicitly.
+1. **Are we filling the hiring demand the business needs?**
+2. **Are we hiring fast enough?**
+3. **Which open positions are most likely to miss their required offer date?**
+4. **Is the active recruiting pipeline strong enough to meet future demand?**
+5. **Where in the recruiting process are the main constraints or conversion problems?**
 
-**Demand.** The set of positions the business expects to be filled inside the selected period. Demand is anchored on **Target Hire Date**.
+The data layer must support these questions without requiring business logic to be recreated separately inside each Power BI visual.
 
-**Target Hire Date (THD).** The date the business needs the person to start. THD is the demand clock. It answers "when is the position needed?"
+---
 
-**Target Offer Acceptance Date (TOAD).** The date an offer must be accepted for the hire to start on time. TOAD is the internal delivery clock for TA. It answers "are we going to be late?" TOAD is the only anchor used for risk classification.
+## 3. Scope
 
-**Filled position.** A position where a candidate has **accepted** the offer on or before the as-of date. This is a deliberate governance choice: the recruitment process that TA controls ends at acceptance. Whether the person then starts on the target hire date depends on notice periods, onboarding and start-date scheduling, which sit outside recruitment. An acceptance can still fall through before the target hire date, so acceptances that do not convert to a start are tracked separately rather than being removed from this measure.
+### In scope
 
-**Started position.** A filled position where the new hire has actually begun work. Starts are tracked separately from fills, because they arrive later and are governed by notice periods and onboarding rather than by recruitment. Starts are the population used for all Early Attrition reporting.
+The project includes only data and business logic required for the **Executive Summary page**, including:
 
-**Open position.** A seat on a requisition that has not been filled yet.
+- hiring demand by Target Hire Date
+- positions filled
+- open positions
+- Fill Rate
+- median Time to Fill
+- Target Offer Acceptance Date risk classification
+- open positions at risk
+- hiring constraints
+- recruiting funnel volume
+- stage-to-stage conversion
+- time in recruiting stage where data is available
+- active pipeline health
+- forecasted Fill Rate using active pipeline yield
+- Power BI-ready dimensional and fact datasets
+- executive-summary marts where useful
+- metric definitions
+- schema and relationship definitions
+- data quality and reconciliation tests
 
-This is not worked out on the fly. It is stored as `openings_position`, a column on `fct_requisition` holding the number of seats still to be filled on that requisition. Total Open Positions is the sum of that column across requisitions with status Open.
+### Out of scope
 
-The column decreases by one when a candidate accepts an offer, which is the same event that adds one to Positions Filled. Both measures therefore move at the same moment and always reconcile back to the size of the requisition:
+The following are explicitly excluded from this phase:
 
-```
+- Early Attrition
+- retention metrics
+- NPS
+- recruiter scorecards
+- recruiter productivity and capacity
+- cost per hire
+- source-of-hire analysis
+- diversity analysis
+- detailed Applications page
+- detailed Hires page
+- standalone Funnel Conversion page
+- demand planning beyond what is required for the Executive Summary
+- operational case-management workflows
+
+These subjects may be added later as separate project phases, but they must not increase the complexity of the current Executive Summary data model.
+
+---
+
+## 4. Reporting period and reproducibility
+
+### Historical data coverage
+
+Actual recruiting activity should cover:
+
+**January 1, 2024 through May 31, 2026.**
+
+### Reporting as-of date
+
+The fixed reporting as-of date is:
+
+**May 31, 2026.**
+
+Any logic using concepts such as `today`, `current`, `open`, `days remaining`, `latest`, or `at risk` must use this configured as-of date rather than the computer system date.
+
+This makes the project reproducible. Running the pipeline in the future must not change historical results unless the source data itself changes.
+
+### Future demand
+
+Requisitions may contain **Target Hire Dates through May 31, 2027**.
+
+Future Target Hire Dates are valid planning data and must be preserved. However, no actual recruiting event should occur after the reporting as-of date unless it is explicitly a planned or target date.
+
+Examples of allowed future dates:
+
+- Target Hire Date
+- Target Offer Acceptance Date
+- planned recruiting milestones
+
+Examples of actual dates that must not be later than May 31, 2026:
+
+- application date
+- stage event date
+- offer accepted date
+- offer declined date
+- candidate withdrawal date
+- candidate start date, if present in source data
+
+---
+
+## 5. Core business concepts
+
+### 5.1 Requisition and position
+
+A **requisition** is the hiring request.
+
+A **position** is one seat to be filled.
+
+A requisition may contain multiple positions. Executive delivery metrics therefore use **positions** as the primary counting unit unless a metric explicitly states otherwise.
+
+### 5.2 Target Hire Date (THD)
+
+Target Hire Date is the date the business expects the person to start.
+
+THD is the primary demand date for the Executive Summary. It determines which period a requisition's positions belong to for demand, Fill Rate, open-position reporting, and most executive views.
+
+### 5.3 Target Offer Acceptance Date (TOAD)
+
+Target Offer Acceptance Date is the date by which an offer should be accepted for the position to remain on track for the Target Hire Date.
+
+**TOAD is already defined in the requisition data and must be used as provided. Do not recalculate it from THD.**
+
+TOAD is the date used to classify open-position risk.
+
+### 5.4 Filled position
+
+A position is considered filled when a candidate has **accepted an offer on or before the reporting as-of date**.
+
+Offer acceptance is used because it represents the end of the recruiting process controlled by Talent Acquisition.
+
+### 5.5 Open position
+
+Open positions are represented by `openings_position` in the requisition data.
+
+For an open requisition:
+
+```text
 requested_positions = filled_positions + openings_position
 ```
 
-Example. A requisition for three contact centre agents starts with `openings_position` equal to three and `filled_positions` equal to zero. When the first candidate accepts, the values become two and one. That candidate's actual start date, whenever it happens, changes neither value.
+Total Open Positions is therefore:
 
-**The measurement seam between the two pages.** The Executive Summary counts fills at **offer acceptance**. Early Attrition counts hires at **start date**. This is intentional and unavoidable: retention cannot be measured for someone who has not started. It means the two pages report on overlapping but different populations, and the Early Attrition population always lags the Executive Summary population by the gap between acceptance and start. Never expect the hire counts on the two pages to reconcile.
+```text
+SUM(openings_position)
+```
 
-**Cohort.** A group of new hires who started in the same selected cohort period. Cohorts are used for early attrition reporting.
+for qualifying open requisitions.
 
-**Cohort maturity.** A hire only becomes eligible for the early attrition metric once the full observation window has passed since their start date. A cohort is treated as **fully matured** only when *every* hire in that start month has completed the window. This is the single most important rule on the Early Attrition page.
+`openings_position` is a requisition-level quantity. It must not be multiplied by the number of candidates or stage events joined to the requisition.
 
-**pp (percentage points).** The difference between two percentages. A move from one percentage to another is expressed in percentage points, not as a percentage, to avoid confusion with relative change.
+### 5.6 Hiring constraint
 
-**PYTD.** Prior year to date. The same calendar window one year earlier, used for like-for-like comparison.
+Hiring constraint is recorded at the **requisition level**.
 
-**Target vs threshold vs watch level.** A *target* is the performance commitment for the fiscal year. A *threshold* is a maximum tolerance, used for risk exposure. A *watch level* is an earlier warning line that triggers investigation before the target is formally breached. All three are configured values, listed in section 8.
+Examples may include:
 
-**How the Date Range slicer behaves.** Every visual on the Executive Summary is filtered by **Target Hire Date**, with one exception.
+- insufficient qualified candidates
+- compensation / offer competitiveness
+- hiring manager delay
+- assessment or interview capacity
+- niche skill availability
+- candidate availability / notice period
+- no material constraint
 
-*Filtered by THD* — Fill Rate, Time to Fill, the funnel, open positions, the risk bands, At-Risk Rate and the hiring constraint mix. Changing the range changes which positions are counted. Select a prior year and the page reports on that year's demand.
-
-*Not filtered* — the early attrition card. It always shows the rolling window of fully matured cohorts, because that window is set by cohort maturity against the as-of date rather than by user selection. A shortened range would include cohorts that have not completed the observation window and would report a falsely low rate.
-
-Business Unit and Job Family filters apply to everything.
-
-One demand window across the page keeps the visuals reconciled with each other. Because a position is open precisely when it has no accepted offer, the open-position count equals Unfilled Demand, and the risk bands are a breakdown of the Fill Rate shortfall rather than a separate book of work.
+Because the constraint belongs to the requisition, every open position on that requisition inherits the same current primary constraint for executive reporting.
 
 ---
 
-## 3. Metric index
+## 6. Executive Summary metric contract
 
-| ID | Metric | Page | Type | Date basis | Comparison |
-|---|---|---|---|---|---|
-| EXEC-01 | Fill Rate (Positions Filled vs Demand) | Executive Summary | Ratio | Target Hire Date | FY target |
-| EXEC-02 | Positions Filled | Executive Summary | Sum | Target Hire Date | — |
-| EXEC-03 | Demand (Positions Requested) | Executive Summary | Sum | Target Hire Date | — |
-| EXEC-04 | Pending Starts | Executive Summary | Sum | THD > as-of-date | — |
-| EXEC-05 | Fill Rate Trend (cumulative YTD) | Executive Summary | Trend | Target Hire Date | FY target |
-| EXEC-06 | Forecast Fill Rate | Executive Summary | Forecast | Target Hire Date | FY target |
-| EXEC-07 | Total Open Positions | Executive Summary | Sum | Target Hire Date | — |
-| EXEC-08 | Days to TOAD and Risk Band | Executive Summary | Classification | TOAD vs as-of date | Configured bands |
-| EXEC-09 | Open Positions at Risk / At-Risk Rate | Executive Summary | Count + ratio | Target Hire Date; TOAD vs as-of date | Threshold, PYTD |
-| EXEC-10 | Primary Hiring Constraint | Executive Summary | Mix | Target Hire Date; latest weekly status | — |
-| EXEC-11 | Time to Fill (median) | Executive Summary | Duration | Target Hire Date | FY target, PYTD |
-| EXEC-12 | Funnel Volume by Stage | Executive Summary | Count | Target Hire Date | — |
-| EXEC-13 | Stage-to-Stage Conversion | Executive Summary | Ratio | Target Hire Date | Per-stage target |
-| EXEC-14 | Cumulative Conversion | Executive Summary | Ratio | Target Hire Date | — |
-| EXEC-15 | Median Days in Stage | Executive Summary | Duration | Stage entry | Per-stage SLA |
-| EXEC-16 | Bottleneck Stage | Executive Summary | Derived flag | Target Hire Date | Per-stage target and SLA |
-| EXEC-17 | Early Attrition (rolling matured cohorts) | Early Attrition | Ratio | Employee start date | FY target, prior period |
+### EXEC-01 — Fill Rate
 
+**Business question:** Of the positions the business expects to fill in the selected demand period, how many have been filled?
 
----
-
-## 4. Executive Summary metrics
-
-### EXEC-01 — Fill Rate (Positions Filled vs Demand)
-
-**Business question.** Of the positions the business needed filled in this period, how many did we actually fill?
-
-**Plain-English definition.** Fill Rate compares hiring delivery against hiring demand. Demand is fixed by when the business needed people, not by when recruitment happened to finish. A position counts as filled once the candidate has accepted the offer, because that is the point at which the recruitment process is complete.
-
-**Formula.**
-```
-Fill Rate = Positions Filled ÷ Positions with a Target Hire Date in the period
+```text
+Fill Rate = Positions Filled / Requested Positions
 ```
 
-**Date basis.** Target Hire Date. Both sides of the ratio are anchored to the same demand window, so the metric answers "did we deliver what was due?" rather than "how busy were we?"
+**Date basis:** Target Hire Date.
 
-**Population.** All positions on non-cancelled requisitions with a THD inside the selected period.
+**Denominator:** Sum of requested positions on non-cancelled requisitions with THD in the selected period.
 
-**Excluded.** Cancelled demand, because the business withdrew the requirement. Offers extended but not accepted, because the candidate has not committed.
+**Numerator:** Filled positions associated with the same requisitions and demand period.
 
-**Comparison.** FY Fill Rate target.
+**Filled event:** accepted offer on or before the as-of date.
 
-**How to read it.** The shortfall is the share of needed positions with no accepted offer by the time they were due. The number is a delivery statement.
+**Primary comparison:** configured Fill Rate target.
 
-Because the metric stops at acceptance, it measures what TA controls. It does **not** confirm that the business received the capacity. For that, read it together with pending starts in EXEC-04.
-
-**Common misreadings.**
-- Reading the percentage as seats occupied. It is seats with a signed acceptance. Some of those people will not have started yet.
-- Reading the cumulative year-to-date figure as current performance. See EXEC-05.
-
-**Where to go next.** EXEC-04 (where the gap sits), EXEC-09 (which open positions are late), EXEC-13 (where candidates are lost).
+Fill Rate is a position-based demand attainment measure, not the percentage of requisitions closed.
 
 ---
 
 ### EXEC-02 — Positions Filled
 
-**Business question.** How many positions did recruitment successfully close?
+**Business question:** How many required positions has TA successfully filled?
 
-**Plain-English definition.** The sum of positions filled in requisition.
+```text
+Positions Filled = SUM(filled_positions)
+```
 
-**Formula.** `Sum of filled positions in requisition.`
+**Date basis:** requisition Target Hire Date.
 
-**Date basis.** Target Hire Date of its requisition for period attribution.
-
-**Excluded.** Offers extended but not accepted. Declined offers. Cancelled requisition.
-
-**How to read it.** This is the numerator of Fill Rate and the measure of TA output. It closes at the last event recruitment controls.
-
-**Common misreadings.**
-- Reading this as headcount on the payroll. It is not. Finance and operations recognise starts, and the two figures always differ by the pending-start population.
-- Confusing this with the number of requisitions closed. A requisition normally holds more than one position.
+Offers that were extended but not accepted do not count as fills.
 
 ---
 
-### EXEC-03 — Demand (Requested Positions)
+### EXEC-03 — Demand / Requested Positions
 
-**Business question.** How many approved positions did the business commit to filling in this period?
+**Business question:** How many positions does the business expect TA to fill in the selected period?
 
-**Plain-English definition.** The total number of positions with a Target Hire Date inside the selected period, across all non-cancelled requisitions.
+```text
+Demand = SUM(requested_positions)
+```
 
-**Formula.** `Sum of positions on requisitions where Target Hire Date is in the selected period.`
+**Date basis:** Target Hire Date.
 
-**Date basis.** Target Hire Date.
-
-**Excluded.** Cancelled requisitions and cancelled positions.
-
-**How to read it.** Demand is the denominator that makes Fill Rate fair. It is set by workforce planning and hiring managers, not by TA.
-
-**Common misreadings.** Treating Demand as a TA-controlled number. TA influences delivery, not the plan.
+Cancelled requisitions or cancelled demand must be excluded.
 
 ---
 
-### EXEC-04 — Unfilled Demand and Pending Starts
+### EXEC-04 — Total Open Positions
 
-**Business question.** How many of the demand has been filled in advance?
+**Business question:** How many positions remain unfilled?
 
-**Plain-English definition.** Pending Starts is the accepted positions where the person has not yet begun work.
-
-**Formula.**
-```
-Unfilled Demand   = Demand − Positions Filled            (no accepted offer)
-Pending Starts    = Positions Filled − Started Positions  (accepted, not yet begun)
+```text
+Total Open Positions = SUM(openings_position)
 ```
 
-**Date basis.** Target Hire Date for scope.
+for open, non-cancelled requisitions within the selected THD demand period.
 
-**Pending Starts** Recruitment finished in advance. It represents filled positions that has been secured but has not yet arrived, because target hire date is the future.
+Expected reconciliation:
+
+```text
+Requested Positions = Filled Positions + Open Positions
+```
+
+This reconciliation should hold at total level and under supported business filters.
 
 ---
 
-### EXEC-05 — Fill Rate Trend (Cumulative YTD)
+### EXEC-05 — Median Time to Fill
 
-**Business question.** Is delivery against the annual commitment improving as the year progresses?
+**Business question:** How long does it typically take TA to secure an accepted offer?
 
-**Plain-English definition.** A running total of positions filled divided by a running total of positions due, from the start of the fiscal year. Each month adds to both sides of the ratio rather than replacing them.
-
-**Formula.**
-```
-Cumulative Fill Rate (month M) = Σ Positions Filled (FY start .. M)
-                                 ÷ Σ Positions Due by THD (FY start .. M)
+```text
+Time to Fill = Offer Accepted Date - Requisition Approval Date
 ```
 
-**Date basis.** Target Hire Date.
+The Executive Summary reports the **median**, not the average, because recruiting cycle times often contain long-tail outliers.
 
-**How to read it.** Cumulative measures are correct for **attainment** reporting against an annual target. They are slow to move because early months stay in the calculation all year. A rising cumulative line means recent months are performing better than the year-to-date average, but it does not by itself prove recovery.
+**Population:** accepted offers only.
 
-**Common misreadings.** Using the rising cumulative line as evidence that the problem is solved. For directional performance, use the monthly THD-cohort Fill Rate, which shows each month on its own. This is the difference between "the year is catching up" and "this month was good".
+**Date basis for Executive Summary attribution:** Target Hire Date of the associated requisition.
+
+The calculation must not use future accepted offers after the reporting as-of date.
 
 ---
 
-### EXEC-06 — Forecast Fill Rate
+### EXEC-06 — Days to TOAD
 
-**Business question.** Based on the candidates we have right now, where will we land at year end?
+For every open requisition:
 
-**Plain-English definition.** A projection that adds expected future fills from the live candidate pipeline to the fills already achieved. Each active candidate is weighted by how often candidates at that stage, in that Business Unit, Job Family and Job Level, have historically converted to an accepted offer.
-
-**Formula.**
-```
-Expected Pipeline Fills   = Σ (active candidates × historical stage-to-acceptance yield
-                                for their segment)
-                            capped at remaining open positions per requisition
-Forecast Filled Positions = Actual Filled Positions + Expected Pipeline Fills
-Forecast Fill Rate        = Forecast Filled Positions ÷ Demand
+```text
+Days to TOAD = Target Offer Acceptance Date - As-of Date
 ```
 
-**Date basis.** Target Hire Date, consistent with EXEC-01.
+The project uses the fixed as-of date of May 31, 2026.
 
-**Excluded.** Any event after the as-of date is excluded from the historical yield calculation, so the forecast cannot borrow information from the future. Sparse segments fall back to a broader grouping so that small populations do not produce unstable projections. The fallback hierarchy is configured, not improvised.
-
-**How to read it.** The dashed forecast line is a planning aid, not a commitment. It says whether the current pipeline is sufficient to reach target if conversion behaves as it has historically.
-
-The yield being applied is stage-to-**acceptance**, not stage-to-start. This makes the forecast shorter-horizon and more reliable, because it no longer has to predict start-date scheduling that sits outside recruitment.
-
-**Common misreadings.**
-- Treating the forecast as a promise. It assumes historical conversion holds.
-- Assuming pipeline strength changes risk classification. It does not. Risk is set by TOAD alone (EXEC-08).
+Risk is based only on TOAD and current open positions. Pipeline strength does not change the risk classification.
 
 ---
 
-### EXEC-07 — Total Open Positions
+### EXEC-07 — Open Position Risk Band
 
-**Business question.** How large is the open hiring book right now?
+Every open requisition is classified from `days_to_toad`.
 
-**Plain-English definition.** The number of unfilled seats on open requisitions whose Target Hire Date falls in the selected period.
-
-**Formula.** `Sum of openings_position across requisitions with status = Open and a Target Hire Date in the selected period.`
-
-**Date basis.** Target Hire Date, the same basis as Demand and Fill Rate.
-
-**Reconciliation.** Because a position is open precisely when it has no accepted offer, this measure and Unfilled Demand in EXEC-04 describe the same population:
-
-```
-Total Open Positions (period) = Demand − Positions Filled = Unfilled Demand
-```
-
-This identity should hold on every filter combination and is a useful validation test.
-
-**How to read it.** This is the denominator for the risk module, and it is also the Fill Rate shortfall. The risk bands in EXEC-08 are therefore a breakdown of positions the page has already reported as missed, which is what makes the Executive Summary read as a single chain rather than as separate scorecards.
-
-**Common misreadings.**
-- Reading this as the size of the whole open hiring book. It is not. Open positions with a Target Hire Date beyond the selected period are out of scope on this page. For the full portfolio, use the At Risk Requisitions detail page.
-- Expecting it to differ from Unfilled Demand. It should not.
-
----
-
-### EXEC-08 — Days to TOAD and Risk Band
-
-**Business question.** Which open positions are going to be late, and how late?
-
-**Plain-English definition.** For every open position, count the days between the observation date and the date by which an offer must be accepted. That number places the position in one of four bands.
-
-**Formula.**
-```
-Days to TOAD = Target Offer Acceptance Date − as-of date
-
-Overdue    Days to TOAD < 0                                TOAD already passed
-High       0 ≤ Days to TOAD ≤ high_risk_max
-Medium     high_risk_max < Days to TOAD ≤ medium_risk_max
-On Track   Days to TOAD > medium_risk_max
-```
-
-Band boundaries are configured (section 8), not hardcoded in the report.
-
-**Date basis.** Two dates do two different jobs. Target Hire Date decides whether a position is in scope for the selected period. Target Offer Acceptance Date, compared against the fixed as-of date, decides which band it lands in. The band is evaluated once per requisition, and all remaining openings on that requisition inherit it.
-
-**Expected band distribution.** TOAD precedes THD by the expected notice period, so positions whose THD falls inside a period ending on or before the as-of date will mostly classify as Overdue. This is correct behaviour, not a data problem. The High, Medium and On Track bands only populate meaningfully when the selected range extends into future months.
-
-**Excluded from the logic.** Recruitment stage, stage ageing, pipeline strength and projected remaining duration. These are deliberately kept out. Risk is a **schedule** measure, and mixing schedule with pipeline judgement makes the classification impossible to audit or compare across teams. Those fields are still available as diagnostics (EXEC-10).
-
-**How to read it.** The bands are a triage queue. Overdue positions have already missed the point at which an on-time start was possible. High and Medium are still recoverable with intervention.
-
-**Common misreadings.** Assuming a position with a strong pipeline should be downgraded out of the risk bands. It should not. The band describes time remaining, and the pipeline diagnostic sits beside it to explain why.
-
----
-
-### EXEC-09 — Open Positions at Risk / At-Risk Rate
-
-**Business question.** How much of the open hiring book is exposed to missing its target start date?
-
-**Plain-English definition.** The count and share of open positions that are Overdue, High or Medium risk against their Target Offer Acceptance Date.
-
-**Formula.**
-```
-Open Positions at Risk = Overdue + High + Medium
-At-Risk Rate           = Open Positions at Risk ÷ Total Open Positions
-```
-
-**Date basis.** Target Hire Date for scope; TOAD against the fixed as-of date for classification. The card answers "of the demand due in this period, how much is still unfilled and how late is it?"
-
-**Comparison.** A configured maximum threshold, plus the same period one year earlier.
-
-**What the PYTD comparison means here.** Because scope is filtered by Target Hire Date but lateness is always measured against the current as-of date, the prior-year figure reads as "of last year's demand, how much remains unfilled and overdue today". It is not a reconstruction of how exposed the book looked a year ago. That is a legitimate and useful comparison, but it is a different question, and anyone presenting the movement should say which one they mean.
-
-**How to read it.** This module explains the Fill Rate shortfall rather than adding a separate measure. The positions counted here are the same positions Fill Rate reported as missed, sorted by how overdue they are.
-
-Read the count of affected **requisitions** alongside the count of positions. Risk is usually concentrated on relatively few requisitions, which means intervention can be targeted at a small number of conversations rather than spread thinly.
-
-When the selected range extends into future months, the metric also becomes forward-looking, because positions not yet due appear in the High, Medium and On Track bands. For a period that has already closed, treat it as a lateness breakdown of a known shortfall.
-
-**Common misreadings.**
-- Treating this as the whole open hiring book. It is only the part with a Target Hire Date in the selected period.
-- Being surprised that almost everything is Overdue on a closed period. See the expected band distribution note in EXEC-08.
-- Reading the rate as a failure rate. Some of these positions will still be recovered, and the denominator is already the shortfall population.
-
-**Where to go next.** EXEC-10 for the reason behind each at-risk position.
-
----
-
-### EXEC-10 — Primary Hiring Constraint
-
-**Business question.** What is actually blocking the positions that are at risk?
-
-**Plain-English definition.** Each open requisition carries one primary blocker, recorded by the TA leadership team in a weekly status review. Every remaining opening on that requisition inherits that blocker, so the chart can be read in positions.
-
-**Formula.** `Count of at-risk positions grouped by the primary_hiring_constraint on their requisition, taken from the latest valid weekly status record on or before the as-of date.`
-
-**Date basis.** Target Hire Date for scope, inherited from the at-risk population; latest valid weekly status record on or before the as-of date for the constraint value.
-
-**Constraint values and ownership.** The value list is governed. Ownership is what makes the breakdown actionable.
-
-| Constraint | Owner |
+| Risk band | Rule |
 |---|---|
-| Hiring manager delays | Hiring managers |
-| Low candidate pipeline | TA sourcing |
-| Hard-to-fill / niche skills | TA sourcing and market conditions |
-| Interview scheduling delays | Hiring managers and coordination |
-| Compensation constraints | Reward / finance |
-| High candidate fallout | TA and candidate experience |
-| Offer approval delays | Approvers |
-| Background check delays | Vendor |
+| **Missed** | `days_to_toad < 0` |
+| **High Risk** | `0 <= days_to_toad <= 7` |
+| **Medium Risk** | `8 <= days_to_toad <= 14` |
+| **On Track** | `days_to_toad >= 15` |
 
-**How to read it.** This is a diagnostic layer, not a classifier. It never changes the risk band. Its value is accountability: a material share of at-risk positions is normally blocked by causes owned outside TA. Presenting risk without this breakdown invites the assumption that all delay is a recruitment failure.
+The number reported in each risk band is the **sum of `openings_position`**, not the number of requisitions.
 
-**Common misreadings.**
-- Treating constraint counts as a second risk measure. They are a decomposition of the same at-risk population.
-- Expecting more than one constraint per requisition. One primary constraint is recorded by design, to keep the totals additive.
+Example:
 
----
+A requisition has 8 open positions and `days_to_toad = 5`.
 
-### EXEC-11 — Time to Fill (Median)
+Result:
 
-**Business question.** How long does recruitment take from approval to a signed acceptance?
-
-**Plain-English definition.** The median number of calendar days between a requisition being approved and a candidate accepting the offer, across fills completed in the period.
-
-**Formula.**
-```
-Time to Fill (per fill) = Offer Accepted Date − Requisition Approval Date
-Reported value          = Median across all completed fills in the period
+```text
+High-Risk Requisitions = 1
+High-Risk Open Positions = 8
 ```
 
-**Date basis.** Offer accepted date determines which period a fill falls into.
-
-**Population.** Completed fills only.
-
-**Excluded.** Requisitions still open, because including them would understate duration. This is survivorship by design and is the reason Time to Fill can look stable while At Risk deteriorates: the slowest requisitions are still open and have not yet entered the calculation.
-
-**Comparison.** FY target and PYTD.
-
-**Definitional coherence.** Time to Fill ends at offer acceptance, and a position is counted as filled at offer acceptance. The two definitions stop at the same event, so Time to Fill measures exactly the duration that Fill Rate counts as complete.
-
-**Why median rather than average.** A small number of very hard roles can add weeks to an average and make a normal month look like a crisis. The median describes the typical requisition, which is the more useful management number.
-
-**How to read it.** Read alongside EXEC-09. Speed improving while risk exposure rises is a meaningful signal that the difficult work is accumulating in the still-open book rather than in completed fills.
-
-**Common misreadings.**
-- Adding up the stage medians in the funnel to reconstruct Time to Fill. They will not reconcile. See EXEC-15.
-- Reading a fall in Time to Fill as unambiguously good. Fast hiring with weak screening is exactly the pattern that appears two months later on the Early Attrition page.
+The Executive Summary KPI uses **open positions**, while requisition count may be retained as supporting context where useful.
 
 ---
 
-### EXEC-12 — Funnel Volume by Stage
+### EXEC-08 — At-Risk Open Positions
 
-**Business question.** How many candidates reached each stage of the recruitment process?
+**Business question:** How many currently open positions require immediate management attention because their TOAD is near or already missed?
 
-**Plain-English definition.** The count of candidates who entered each stage, from application to offer acceptance, for applications received in the period.
-
-**Stage sequence.** Stage order, conversion target and service level are held in `dim_stage` and configuration, not in the report.
-
-| Order | Stage |
-|---|---|
-| 1 | Application Received |
-| 2 | Recruiter Screen |
-| 3 | Assessment |
-| 4 | Interview |
-| 5 | Reference Check |
-| 6 | Offer Extended |
-| 7 | Offer Accepted |
-
-**Date basis.** Application date.
-
-**How to read it.** The funnel ends at Offer Accepted, which is also the point at which a position counts as filled. The funnel therefore reconciles directly to the Fill Rate numerator: acceptances equal positions filled. Some of those people will not have started yet, which is the pending-start population in EXEC-04.
-
-**Common misreadings.** Assuming acceptances equal people at work. They equal completed recruitments.
-
----
-
-### EXEC-13 — Stage-to-Stage Conversion
-
-**Business question.** At which step are we losing candidates faster than we should?
-
-**Plain-English definition.** The percentage of candidates entering a stage who progress to the next stage, compared with the target conversion rate for that stage.
-
-**Formula.** `Stage Conversion = Candidates entering next stage ÷ Candidates entering this stage`
-
-**Date basis.** Application date.
-
-**How to read it.** Conversion is read against its own target, not against other stages. A low conversion rate is not automatically bad, and a high one is not automatically good. Converting well above target early in the funnel means screening is letting more people through than planned, which pushes weaker candidates into expensive later stages. That is a quality signal worth investigating, not a success.
-
-**Common misreadings.**
-- Comparing conversion rates between different stages. They have different targets and different purposes.
-- Reading high conversion as always positive.
-
----
-
-### EXEC-14 — Cumulative Conversion
-
-**Business question.** How many applications do we need to produce one filled position?
-
-**Plain-English definition.** The percentage of the original application base that survives to each stage.
-
-**Formula.** `Cumulative Conversion = Candidates at stage ÷ Total applications`
-
-**Date basis.** Application date.
-
-**How to read it.** The end-to-end value is the sourcing volume planning number. Because a fill is an acceptance, its inverse is the number of applications required per filled position. If Demand rises, the application base must rise by a similar factor unless conversion improves.
-
-**Common misreadings.** Treating cumulative conversion as a quality measure. It is primarily a volume-planning measure and is heavily influenced by sourcing channel mix.
-
----
-
-### EXEC-15 — Median Days in Stage
-
-**Business question.** Which stage is slow, and is it slower than we allow?
-
-**Plain-English definition.** The median calendar days a candidate spends in a stage, measured from stage entry to the next stage entry or final outcome, compared with the agreed service level for that stage.
-
-**Formula.** `Median (Next stage entry date − This stage entry date), across completed stage records.`
-
-**Date basis.** Stage entry date.
-
-**Excluded.** Candidates still sitting in a stage. Including them would bias the median downward, because slow-moving candidates have not finished yet.
-
-**Comparison.** The configured per-stage SLA.
-
-**Important reconciliation note.** Stage medians use different populations at each stage and therefore **do not add up to Time to Fill**. The stage medians answer "how slow is this step for a typical candidate?" while Time to Fill answers "how long did a typical successful fill take end to end?" This is stated on the dashboard itself because it is the single most common question asked about the funnel.
-
-**How to read it.** Compare each median to its own SLA, not to the other stages.
-
----
-
-### EXEC-16 — Bottleneck Stage
-
-**Business question.** If we could fix one step in the process, which one?
-
-**Plain-English definition.** The stage with the worst combined performance on speed and conversion against its own targets. It is derived from the data rather than written in by hand, so it moves as performance changes.
-
-**Formula.** `Rank stages by variance against SLA and variance against target conversion, among stages with sufficient candidate volume. Flag the worst.`
-
-**Excluded.** Stages below the configured minimum volume, so that a small population cannot produce an unstable callout.
-
-**How to read it.** Two dimensions matter, and their combination determines the action:
-
-| Pattern | Meaning | Action |
-|---|---|---|
-| Slow **and** low conversion | True bottleneck | Process intervention |
-| Slow but high conversion | Capacity-constrained, still working | Add capacity |
-| Fast but low conversion | Quality or sourcing problem | Fix candidate fit upstream |
-
-**Common misreadings.** Assuming a flagged bottleneck is a TA failure. The constraint frequently sits with hiring managers, which the constraint breakdown in EXEC-10 will confirm or contradict.
-
----
-
-## Early Attrition metrics
-
-### EXEC-17 — Early Attrition (Rolling Matured Cohorts)
-
-**Business question.** Of the people we hired, what share left within their first weeks?
-
-**Plain-English definition.** The percentage of new hires who left within the observation window of starting, measured across the rolling set of fully matured monthly cohorts.
-
-**Formula.**
-```
-Early Attrition = Hires terminating within observation_window_days of start
-                  ÷ Hires eligible for observation (mature cohorts only)
+```text
+At-Risk Open Positions =
+    Missed Open Positions
+  + High-Risk Open Positions
+  + Medium-Risk Open Positions
 ```
 
-**Date basis.** Employee start date determines cohort membership. Termination date determines the outcome.
+Equivalent condition:
 
-**Excluded.** Hires who have not completed the observation window. Immature cohorts are outside the calculation entirely, on both sides of the ratio.
+```text
+days_to_toad <= 14
+```
 
-**Comparison.** FY target and the equivalent prior period.
+for open positions on qualifying requisitions.
 
-**Slicer behaviour.** This metric appears on both pages and behaves the same way on each: the Date Range slicer does not apply to it. On the Early Attrition page the cohort window is shown as its own control, set automatically to the fully matured cohorts. On the Executive Summary the card is static for the same reason. Business Unit and Job Family filters do apply on both pages.
-
-**How to read it.** This is the quality counterweight to the delivery metrics on the Executive Summary. Fill Rate and Time to Fill measure whether TA delivered. This measures whether what was delivered stayed. A hire who leaves in week seven consumed full recruitment cost, produced little, and returns the requisition to the open book.
-
-Read it against Time to Fill in particular. Attrition rising while Time to Fill improves is the signal that speed may be coming at the cost of hire quality, and it is the reason both pages must be read together.
-
-**Common misreadings.**
-- Including immature cohorts to make the number look better. This is the failure mode the whole page is designed to prevent.
-- Reading a low percentage as a small problem. Convert it to a count. Each one is a full recruitment cycle repeated.
-- Assuming all early leaving is a TA problem. See ATTR-03.
-
-**Where to go next.** ATTR-05 for the trend, ATTR-08 for the cause, ATTR-02 for the most recent complete signal.
-
-| Reason | Attribution |
-|---|---|
-| Role / job expectation mismatch | TA-related |
-| Compensation expectation mismatch | TA-related |
-| Work arrangement / location mismatch | TA-related |
-| Schedule / shift mismatch | TA-related |
-| Expectation setting during hiring | TA-related |
-| Onboarding / manager experience | Not TA-related |
-| Performance / capability gap | Not TA-related |
-| Personal / health / other | Not TA-related |
-| Counter-offer from former employer | Not TA-related |
-| Not coded / no exit interview | Unknown |
-
-**How to read it.** The four expectation-mismatch reasons (role, pay, work arrangement, schedule) are the clearest recruitment-quality signal available, because they all point at the same fixable behaviour: what candidates are told during screening and at offer.
-
-Concentration matters as much as the total. A problem spread evenly across every business unit and job family is a systemic issue. A problem concentrated in one cohort, one function or one role type is a solvable one, and the reason detail is where that concentration becomes visible.
-
-**Common misreadings.**
-- Adding percentages across the TA and non-TA lists and expecting them to reach 100%. The unknown group must be included.
-- Treating "counter-offer from former employer" as a TA failure. It is attributed outside TA because it reflects a candidate's existing employer acting after acceptance.
+The page should still show Missed, High Risk, and Medium Risk separately so the executive can distinguish overdue demand from approaching risk.
 
 ---
 
-## 6. Reading the two pages together
+### EXEC-09 — Hiring Constraint Mix
 
-The metrics are designed to be read as one story, not as two independent scorecards. Four relationships carry most of the meaning.
+**Business question:** What is preventing the current open demand from being filled?
 
-**Fill Rate against the risk bands.** These are the same positions viewed twice. Fill Rate says how many were missed; the bands say how late those same positions are; the constraint mix says what is blocking them. If the open-position count ever stops matching the Fill Rate shortfall, the model is wrong.
+The measure distributes open positions by the current primary hiring constraint recorded on each requisition.
 
-**Fill Rate against Demand.** A falling Fill Rate does not prove that recruitment got worse. Check whether Demand rose. Delivery can be flat while the ratio deteriorates, which is a planning conversation rather than a performance conversation.
+```text
+Open Positions by Constraint = SUM(openings_position)
+```
 
-**Time to Fill against At-Risk exposure.** Time to Fill only counts completed fills, so improving speed and rising risk can be true at the same time. When both move in that pattern, the difficult requisitions are accumulating in the still-open book and have not yet reached the speed calculation.
-
-**Bottleneck and constraint against ownership.** The funnel bottleneck and the hiring constraint breakdown usually agree with each other. When they both point outside TA, the delivery shortfall is a shared accountability problem and should be presented as one.
-
-**Speed against early attrition.** This is the most important pairing on the dashboard. Fast hiring is not automatically good hiring. When Time to Fill improves while early attrition worsens, the likely explanation is that screening depth and expectation setting were traded away for speed. The Executive Summary alone would show that as success. The two pages together show it as a trade-off, which is the reason both exist.
-
-The dashboard is deliberately built so that a delivery signal and a quality signal cannot hide each other.
+The Executive Summary should use open positions as the weight so that a constraint affecting a 20-position requisition has more executive impact than a constraint affecting a single-position requisition.
 
 ---
 
-## 7. Governance rules
+### EXEC-10 — Funnel Volume by Stage
 
-These rules exist to keep the numbers defensible. They should not be changed without a documented decision recorded in section 9.
+**Business question:** Where are active candidates currently concentrated in the recruiting process?
 
-| Rule | Reason |
-|---|---|
-| A position is filled at offer acceptance | Acceptance is the last event recruitment controls; start-date scheduling is not a TA outcome |
-| Started positions are reported separately, never merged into Fill Rate | The business needs both the recruitment result and the capacity result, and they are different numbers |
-| A position leaves the open book at acceptance | Keeps the open book, TOAD risk and the Fill Rate numerator stopping at the same event |
-| Fill Rate is anchored on Target Hire Date | The denominator must reflect what the business needed, not when recruitment finished |
-| Risk is classified by TOAD alone | Schedule risk must be auditable and comparable; pipeline judgement is a separate diagnostic |
-| Hiring constraints never change a risk band | Diagnostics explain risk, they do not reclassify it |
-| One primary constraint per requisition | Keeps position counts additive and prevents double counting |
-| Every Executive Summary visual except the attrition card is filtered by Target Hire Date | One demand window across the page; the risk bands become a breakdown of the Fill Rate shortfall rather than a separate book of work |
-| Total Open Positions for a period must equal Unfilled Demand | The two are the same population by definition; any difference is a defect |
-| Risk banding always compares TOAD against the fixed as-of date, never against the end of the selected range | Lateness is a fact about today, not about the period being viewed |
-| The full open-book portfolio view lives on the At Risk Requisitions detail page | The Executive Summary trades portfolio coverage for reconciliation; the coverage still has to exist somewhere |
-| Immature cohorts never enter an attrition denominator | Otherwise recent hires are silently counted as retained |
-| A monthly cohort is shown only when fully matured | Partial cohorts always understate attrition |
-| The Executive Summary attrition card ignores the date range | A shortened window would include cohorts that have not completed the observation period |
-| Executive Summary counts acceptances, Early Attrition counts starts | Retention cannot be measured before someone starts; the seam is documented, not hidden |
-| Uncoded exits stay in the overall rate, outside the TA split | The headline is never understated and neither side of the split is inflated |
-| Stage medians are not expected to sum to Time to Fill | Different populations, different questions |
-| All "current" logic uses the fixed as-of date | Results must be reproducible regardless of when the pipeline runs |
+The measure counts active candidate applications by current recruiting stage for open requisitions.
+
+Only candidates whose current status is active should contribute to the active-pipeline view.
+
+Active candidates must not remain attached to closed or cancelled requisitions.
 
 ---
 
-## 8. Governed parameters
+### EXEC-11 — Stage-to-Stage Conversion
 
-Every number the dashboard compares against lives in configuration, not in a measure or in this text. This section names the parameters and where they are held. Values are read from the configuration files at run time.
+**Business question:** At which recruiting stages are candidates most likely to fall out?
 
-**Reporting window** — `config/business_rules.yml`
+For completed historical stage movements:
 
-| Parameter | Meaning |
-|---|---|
-| `data_start_date` | First date covered by the dataset |
-| `data_end_date` | Last date of completed business events |
-| `as_of_date` | The fixed reporting date for all "current" logic |
-| `max_target_hire_date` | Planning horizon for open requisitions |
+```text
+Stage Conversion = Candidates progressing to next stage / Candidates completing current stage
+```
 
-**Performance targets** — `config/targets.yml`
+The exact stage mapping must be governed in configuration or YAML rather than embedded repeatedly in transformation code.
 
-| Parameter | Applies to |
-|---|---|
-| `fill_rate_target` | EXEC-01, EXEC-05, EXEC-06 |
-| `time_to_fill_target_days` | EXEC-11 |
-| `at_risk_rate_threshold` | EXEC-09 |
-
-**Risk bands** — `config/business_rules.yml`
-
-| Parameter | Applies to |
-|---|---|
-| `high_risk_max_days` | Upper bound of the High band, in days to TOAD |
-| `medium_risk_max_days` | Upper bound of the Medium band, in days to TOAD |
-
-
-**Value lists** — `config/business_rules.yml`
-
-| Parameter | Applies to |
-|---|---|
-| `hiring_constraint_values` | EXEC-10 |
-| `min_stage_volume` | EXEC-16 bottleneck eligibility |
-
-**Rule.** A target or threshold must never be hardcoded in a DAX measure, a Python module or this document. If a comparison value appears anywhere other than configuration, it is a defect.
+Candidate records still actively in a stage must not be incorrectly treated as failures.
 
 ---
 
-## 9. Change log
+### EXEC-12 — Median Days in Stage
 
-| Version | Change |
-|---|---|
-| 1.0 | Initial version. Executive Summary and Early Attrition pages. |
+**Business question:** Where is the recruiting process slowing down?
+
+```text
+Days in Stage = Stage Exit Date - Stage Entry Date
+```
+
+The Executive Summary uses median days in stage for completed stage intervals.
+
+For active candidates still in their current stage, current age may be calculated against the as-of date for operational pipeline-health analysis, but it must be clearly distinguished from completed historical duration.
+
+---
+
+## 7. Forecast Fill Rate
+
+### 7.1 Business purpose
+
+The forecast answers:
+
+**Based on the active candidate pipeline as of May 31, 2026, how much of future hiring demand is likely to be filled if historical conversion behavior continues?**
+
+The forecast is a planning indicator, not a guarantee.
+
+### 7.2 Forecast segmentation
+
+Historical pipeline yield should be calculated as specifically as the data supports using:
+
+- Business Unit
+- Job Family
+- Job Level
+- Recruiting Stage
+
+The preferred yield grain is:
+
+```text
+Business Unit + Job Family + Job Level + Current Stage
+```
+
+If a segment does not have enough historical observations to produce a stable rate, the model should use a documented fallback hierarchy to a broader segment rather than return an unstable or misleading conversion probability.
+
+### 7.3 Stage-to-acceptance yield
+
+For each active pipeline candidate, estimate the probability of eventually reaching accepted offer from the candidate's current stage using historical candidates from the appropriate segment.
+
+```text
+Expected Pipeline Fills = SUM(active candidate stage-to-acceptance probability)
+```
+
+Expected fills must then be capped at the number of remaining open positions on the requisition.
+
+A requisition with 3 open positions cannot contribute more than 3 forecast fills regardless of how many candidates are in its pipeline.
+
+### 7.4 Forecast filled positions
+
+```text
+Forecast Filled Positions =
+    Actual Filled Positions
+  + Expected Pipeline Fills
+```
+
+### 7.5 Forecast Fill Rate
+
+```text
+Forecast Fill Rate = Forecast Filled Positions / Demand
+```
+
+The forecast should support grouping by THD month so Power BI can show actual Fill Rate and projected Fill Rate on the same executive trend.
+
+### 7.6 Leakage prevention
+
+Historical yield calculations must use only recruiting outcomes known on or before May 31, 2026.
+
+Future outcomes must never be used to calculate a candidate's historical conversion probability.
+
+---
+
+## 8. Executive Summary Power BI contract
+
+The data model must support the following page components.
+
+### KPI cards
+
+1. **Fill Rate**
+2. **Median Time to Fill**
+3. **At-Risk Open Positions**
+
+Supporting context such as requested positions, filled positions, or total open positions may be included as secondary labels or tooltips rather than additional primary KPI cards.
+
+### Core visuals
+
+The Executive Summary should be able to support:
+
+- actual Fill Rate versus forecast Fill Rate over the THD timeline
+- open positions by risk band
+- open positions by primary hiring constraint
+- recruiting funnel / stage volume with conversion context
+- stage conversion and/or stage-time bottleneck indicators
+- offer or pipeline outcome context where retained in the final wireframe
+
+The purpose of every visual should be to explain one of the executive questions in Section 2. Avoid visuals that provide detail without supporting an executive decision.
+
+### Page filters
+
+Required slicers / filters:
+
+- Target Hire Date range
+- Business Unit
+- Job Family
+- Job Level, if retained in the wireframe
+
+THD is the primary date filter for demand-oriented Executive Summary visuals.
+
+The as-of date is a project configuration value and is not a user slicer.
+
+---
+
+## 9. Data model requirements
+
+The implementation may use normalized facts plus executive marts, but the business logic must remain consistent regardless of physical design.
+
+### 9.1 Required dimensions
+
+At minimum:
+
+- `dim_date`
+- `dim_business_unit`
+- `dim_job_family`
+- `dim_job_level`
+- `dim_recruiting_stage`
+
+Additional dimensions may be added only where they improve model clarity or avoid repeated attributes.
+
+### 9.2 Requisition fact
+
+Suggested table: `fct_requisition`
+
+**Grain:** one row per requisition.
+
+Minimum fields required for Executive Summary logic:
+
+- requisition_key
+- requisition_id
+- requisition_status
+- approval_date
+- target_hire_date
+- target_offer_acceptance_date
+- requested_positions
+- filled_positions
+- openings_position
+- business_unit_key
+- job_family_key
+- job_level_key
+- primary_hiring_constraint
+
+If the source provides multiple requisition snapshots, transformation logic must explicitly resolve the snapshot needed for the as-of reporting state rather than accidentally summing multiple versions of the same requisition.
+
+### 9.3 Application / candidate pipeline fact
+
+The project must support both current active pipeline and historical stage conversion.
+
+Preferred design:
+
+- a current application-level fact for active pipeline state
+- a stage-event fact for historical movement and stage duration
+
+Suggested tables:
+
+- `fct_application`
+- `fct_application_stage_event`
+
+Important keys and attributes include:
+
+- application_key
+- candidate_key
+- requisition_key
+- recruiting_stage_key
+- current recruiting status
+- application date
+- stage entry date
+- stage exit date
+- disposition / withdrawal reason where available
+
+### 9.4 Offer data
+
+Offer information may be stored in a separate fact or integrated into the application fact, but the model must reliably identify:
+
+- offer accepted
+- offer declined
+- offer rescinded where applicable
+- candidate withdrawal / renege where applicable
+- offer accepted date
+
+Accepted offers are required for positions filled, Time to Fill, conversion outcomes, and forecast training labels.
+
+---
+
+## 10. Executive marts
+
+The exact physical mart design may be refined during implementation. The following outputs are recommended because they keep Power BI logic simple.
+
+### `mart_exec_demand`
+
+Purpose: KPI and THD-based delivery analysis.
+
+Suggested grain:
+
+```text
+THD month + Business Unit + Job Family + Job Level
+```
+
+Suggested measures:
+
+- requested_positions
+- filled_positions
+- open_positions
+- fill_rate
+- median_time_to_fill
+
+### `mart_exec_risk`
+
+Purpose: open-position risk and hiring-constraint visuals.
+
+Suggested grain:
+
+```text
+requisition
+```
+
+Suggested fields:
+
+- target_hire_date
+- target_offer_acceptance_date
+- days_to_toad
+- risk_band
+- openings_position
+- primary_hiring_constraint
+- Business Unit
+- Job Family
+- Job Level
+
+### `mart_exec_pipeline`
+
+Purpose: active candidate pipeline health.
+
+Suggested grain:
+
+```text
+Business Unit + Job Family + Job Level + Recruiting Stage
+```
+
+Suggested measures:
+
+- active_candidates
+- historical_stage_conversion
+- stage_to_acceptance_yield
+- median_completed_days_in_stage
+- median_active_stage_age
+
+### `mart_exec_forecast`
+
+Purpose: actual versus projected Fill Rate.
+
+Suggested grain:
+
+```text
+THD month + Business Unit + Job Family + Job Level
+```
+
+Suggested measures:
+
+- demand
+- actual_filled_positions
+- expected_pipeline_fills
+- forecast_filled_positions
+- actual_fill_rate
+- forecast_fill_rate
+
+Power BI may calculate final presentation measures in DAX, but complex row-level business logic should be produced upstream where practical and documented clearly.
+
+---
+
+## 11. Data story requirements
+
+The generated or curated portfolio data should tell a realistic and internally consistent business story rather than behave like unrelated random records.
+
+The Executive Summary should allow a reviewer to observe relationships such as:
+
+- differences in Fill Rate between business segments
+- open-position risk concentrated in specific Job Families or Job Levels
+- a visible connection between hiring constraints and risk exposure
+- a funnel bottleneck that helps explain weaker delivery
+- stronger or weaker active pipelines producing appropriately different forecast Fill Rates
+- future demand extending beyond the as-of date without impossible future recruiting outcomes
+
+The story must emerge from consistent underlying records. Dashboard values must not be independently hard-coded to produce a desired picture.
+
+---
+
+## 12. Data quality and validation rules
+
+The pipeline must fail or clearly flag records that violate core business rules.
+
+### Requisition rules
+
+1. `requested_positions >= 0`
+2. `filled_positions >= 0`
+3. `openings_position >= 0`
+4. `filled_positions <= requested_positions`
+5. `openings_position <= requested_positions`
+6. For active demand where the fields represent current state:
+
+```text
+requested_positions = filled_positions + openings_position
+```
+
+7. Cancelled requisitions must not contribute to active demand or open-position KPIs.
+8. TOAD must be sourced from the requisition field and not silently recomputed.
+
+### Date rules
+
+1. Actual recruiting events must not occur after the as-of date.
+2. Target dates may occur after the as-of date.
+3. Offer accepted date must not precede application chronology where source logic makes that impossible.
+4. Stage exit date must not precede stage entry date.
+5. Time to Fill must not be negative.
+
+### Pipeline rules
+
+1. Active candidates must belong to open, valid requisitions.
+2. A candidate application should have one current stage at the reporting as-of date.
+3. Historical stage events must not create duplicate candidate-stage transitions unless the recruiting process genuinely allows a return to a prior stage.
+4. Candidates still in process must not automatically be treated as failed conversions.
+
+### Risk rules
+
+1. Risk classification applies only to open requisitions / open positions.
+2. Risk counts must use `openings_position`.
+3. Risk band totals must reconcile to Total Open Positions for the same filter context.
+4. Requisition-level joins must not duplicate `openings_position` when candidate-level data is joined.
+
+### Forecast rules
+
+1. Historical yields must not use future outcomes.
+2. Stage yields must remain between 0 and 1.
+3. Expected pipeline fills must not exceed remaining open positions per requisition.
+4. Forecast filled positions must not exceed demand.
+5. Forecast logic and fallback hierarchy must be documented and deterministic.
+
+---
+
+## 13. Required project outputs
+
+The completed analytics project should provide:
+
+### Data outputs
+
+- dimension datasets
+- requisition fact
+- application / pipeline fact
+- application stage-event fact
+- offer fields or offer fact as required
+- Executive Summary marts
+- CSV or Parquet outputs suitable for Power BI
+
+### Documentation
+
+- `README.md` — project purpose, setup, run instructions, and output summary
+- `architecture.md` — pipeline layers, table relationships, grain, and data flow
+- metric definition YAML or Markdown — governed Executive Summary metrics
+- dataset schema YAML — columns, data types, keys, relationships, and descriptions
+
+### Engineering requirements
+
+- Python project managed with `uv`
+- deterministic configuration for the as-of date
+- modular transformations rather than one monolithic script
+- clear source / intermediate / fact / mart separation
+- logging
+- validation tests
+- repeatable execution
+
+The implementation should favor simplicity and readability over unnecessary framework complexity.
+
+---
+
+## 14. Power BI readiness
+
+The final outputs must be designed so that Power BI can use a straightforward star-schema model.
+
+Requirements:
+
+- dimensions have unique keys
+- facts have documented grain
+- many-to-many relationships should be avoided unless there is a clear business reason
+- position quantities must not be duplicated through candidate-level joins
+- THD should connect cleanly to the date dimension for demand views
+- metric logic must produce the same result whether calculated from the governed fact tables or validated against the executive marts
+- numeric measures should remain numeric; presentation formatting belongs in Power BI
+
+Where a calculation is highly reusable and business-critical, prefer creating a governed field or mart measure upstream rather than embedding equivalent logic in several visuals.
+
+---
+
+## 15. Acceptance criteria
+
+The Executive Summary data project is complete when all of the following are true:
+
+1. The project covers only the Executive Summary scope defined here.
+2. Data is reproducible using an as-of date of May 31, 2026.
+3. Historical actual data covers January 2024 through May 31, 2026.
+4. Requisition THDs through May 31, 2027 are preserved for future-demand analysis.
+5. Fill Rate reconciles from requested, filled, and open position quantities.
+6. Median Time to Fill uses approval-to-offer-acceptance duration.
+7. Open-position risk is based on source TOAD and the configured as-of date.
+8. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.
+9. At-Risk Open Positions counts open seats, not merely requisitions.
+10. Hiring constraints are treated as requisition-level attributes.
+11. Funnel metrics distinguish active pipeline from completed historical conversion.
+12. Forecast Fill Rate uses active pipeline stage-to-acceptance yield segmented by Business Unit, Job Family, and Job Level where data supports it.
+13. Forecast expected fills are capped by remaining open positions.
+14. No future actual recruiting outcomes leak into historical metrics or forecast training data.
+15. Required dimensions, facts, marts, documentation, and schema definitions are produced.
+16. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
+17. Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
+
+---
+
+## 16. Design principle
+
+The project should remain intentionally focused.
+
+A strong Executive Summary does not contain every recruiting metric. It gives leadership a concise view of:
+
+**demand → delivery → risk → pipeline → expected outcome.**
+
+Every dataset, metric, and transformation included in this phase should support that story. If an element does not materially help explain one of those five areas, it should be excluded from the current project.
