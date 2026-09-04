@@ -5,26 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TA Analytics — Executive Summary Wireframe</title>
 <style>
-:root{
-  --navy:#0D2137;--navy2:#3E5C7A;--ink:#0F172A;--ink2:#334155;--mute:#64748B;--mute2:#94A3B8;
-  --line:#E2E8F0;--line2:#EEF2F6;--bg:#F1F5F9;--white:#fff;--green:#16A34A;--green2:#15803D;
-  --red:#DC2626;--red2:#991B1B;--redbg:#FEF2F2;--amber:#F59E0B;--amber2:#B45309;--blue:#2563EB;--blue2:#1D4ED8;
-}
+:root{--navy:#0D2137;--navy2:#3E5C7A;--ink:#0F172A;--ink2:#334155;--mute:#64748B;--mute2:#94A3B8;--line:#E2E8F0;--line2:#EEF2F6;--bg:#F1F5F9;--green:#16A34A;--green2:#15803D;--red:#DC2626;--red2:#991B1B;--redbg:#FEF2F2;--amber:#F59E0B;--amber2:#B45309;--blue:#2563EB;--blue2:#1D4ED8}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#DDE3EA;color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;-webkit-font-smoothing:antialiased}
-.app{width:1280px;height:720px;background:var(--bg);border-radius:10px;box-shadow:0 10px 34px rgba(15,23,42,.16);padding:14px 16px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
-.top{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex:none}
-h1{font-size:20px;letter-spacing:-.35px}.tag{font-size:10px;color:var(--mute);margin-top:2px}.basis{font-size:8.5px;color:var(--mute2);margin-top:4px}
-.filters{display:flex;gap:7px;align-items:flex-end}.filter label{display:block;font-size:8px;color:var(--mute);margin-bottom:3px}.filter div,.stamp{background:#fff;border:1px solid #CBD5E1;border-radius:6px;padding:5px 8px;font-size:9.5px;font-weight:500;white-space:nowrap}.filter div{min-width:112px;display:flex;justify-content:space-between;gap:9px}.stamp{background:#E8EEF5;color:var(--ink2)}
-.note{font-size:8.3px;color:var(--mute);background:#E8EEF5;border-left:3px solid var(--blue);padding:5px 8px;border-radius:4px;flex:none}.note b{color:var(--ink2)}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;height:120px;flex:none}.kpi{background:#fff;border:1px solid var(--line);border-radius:9px;padding:10px 12px;display:flex;flex-direction:column}.kpi.quality{box-shadow:inset 3px 0 0 var(--blue)}.kpi.alert{box-shadow:inset 3px 0 0 var(--red);background:#FFFCFC}.kpi h3{font-size:10.5px;color:var(--ink2)}.def{font-size:8.2px;color:var(--mute2);line-height:1.3;margin-top:2px;min-height:20px}.val{display:flex;align-items:baseline;gap:5px;margin-top:2px}.val b{font-size:25px;letter-spacing:-.6px}.val span{font-size:9px;color:var(--mute)}.kpi.alert .val b{color:var(--red2)}.delta{font-size:8.7px;font-weight:600;margin-top:4px}.bad{color:var(--red2)}.watch{color:var(--amber2)}.good{color:var(--green2)}.foot{font-size:8px;color:var(--mute2);margin-top:auto;padding-top:5px;line-height:1.3}
-.row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px;min-height:0}.r1{height:212px;flex:none}.r2{flex:1}.s4{grid-column:span 4}.s5{grid-column:span 5}.s6{grid-column:span 6}.s7{grid-column:span 7}.s8{grid-column:span 8}.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;overflow:hidden;min-width:0}.chead{display:flex;justify-content:space-between;align-items:center;gap:8px}.ctitle{font-size:11px;font-weight:700}.sub{font-size:8.2px;color:var(--mute2);margin-top:2px;line-height:1.25}.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:5px}.legend span{font-size:7.7px;color:var(--mute);display:flex;align-items:center;gap:4px}.sw{width:12px;height:2px;background:var(--blue);display:inline-block}.sw.dash{border-top:2px dashed var(--blue);height:0;background:none}.sw.red{background:var(--red)}
-svg{width:100%;height:auto;display:block}.axis{font-size:7px;fill:#94A3B8}.grid{stroke:#EEF2F6;stroke-width:1}.axisline{stroke:#CBD5E1;stroke-width:1}.blue{stroke:var(--blue2);stroke-width:2.2;fill:none}.forecast{stroke:var(--blue2);stroke-width:2.2;stroke-dasharray:6 4;fill:none}.redline{stroke:var(--red);stroke-width:2.2;fill:none}.ptb{fill:var(--blue2)}.ptr{fill:var(--red)}
-.risk{margin-top:6px}.riskrow{display:grid;grid-template-columns:74px 1fr 28px;gap:6px;align-items:center;margin:6px 0}.riskrow span{font-size:8.7px;color:var(--ink2)}.riskrow b{font-size:9px;text-align:right}.track{height:7px;background:#F1F5F9;border-radius:3px;overflow:hidden}.fill{height:100%;border-radius:3px;background:var(--navy2)}.fill.r{background:var(--red)}.fill.a{background:var(--amber)}.fill.g{background:var(--green)}.riskfoot{font-size:7.8px;color:var(--mute2);margin-top:6px;line-height:1.35;background:#F8FAFC;border-radius:5px;padding:5px 6px}
-.split{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:5px}.split>div+div{border-left:1px solid var(--line2);padding-left:12px}.minihead{font-size:8px;font-weight:700;color:var(--mute);letter-spacing:.25px;margin-bottom:4px}.con{display:grid;grid-template-columns:105px 1fr 23px;gap:5px;align-items:center;margin:4px 0}.con span{font-size:7.9px;color:var(--ink2)}.con b{font-size:8px;text-align:right}.ctrack{height:6px;background:#F1F5F9;border-radius:2px;overflow:hidden}.ctrack i{display:block;height:100%;background:var(--navy2);border-radius:2px}
-.funnel{display:flex;align-items:flex-end;gap:5px;height:122px;margin-top:5px;border-bottom:1px solid var(--line)}.stage{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;min-width:0}.stage b{font-size:8px;color:var(--ink2);margin-bottom:3px}.bar{width:78%;background:var(--navy);border-radius:3px 3px 0 0;display:flex;align-items:flex-start;justify-content:center;color:#fff;font-size:7.4px;padding-top:3px}.stage span{font-size:7px;color:var(--mute);margin-top:3px;white-space:nowrap}.conv{font-size:6.5px;color:var(--mute2);align-self:center;margin-bottom:42px}.flagbox{font-size:7.7px;color:#B91C1C;background:var(--redbg);padding:5px 7px;border-radius:5px;margin-top:6px;line-height:1.3}.flagbox b{color:var(--red2)}
-.qualitychart{display:flex;flex-direction:column;height:100%}.qualitychart .plot{flex:1;min-height:0;margin-top:3px}.qualitynote{font-size:7.6px;color:var(--mute);line-height:1.3;margin-top:4px;background:#F8FAFC;border-radius:5px;padding:4px 6px}.qualitynote b{color:var(--ink2)}
-.footer{font-size:7.5px;color:var(--mute2);display:flex;justify-content:space-between;gap:12px;flex:none}.footer b{color:var(--ink2)}
+.app{width:1280px;height:720px;background:var(--bg);border-radius:10px;box-shadow:0 10px 34px rgba(15,23,42,.16);padding:13px 15px;display:flex;flex-direction:column;gap:7px;overflow:hidden}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;flex:none}h1{font-size:20px;letter-spacing:-.35px}.tag{font-size:10px;color:var(--mute);margin-top:2px}.basis{font-size:8.3px;color:var(--mute2);margin-top:3px}
+.filters{display:flex;gap:6px;align-items:flex-end}.filter label{display:block;font-size:8px;color:var(--mute);margin-bottom:3px}.filter div,.stamp{background:#fff;border:1px solid #CBD5E1;border-radius:6px;padding:5px 8px;font-size:9.3px;font-weight:500;white-space:nowrap}.filter div{min-width:110px;display:flex;justify-content:space-between;gap:9px}.stamp{background:#E8EEF5;color:var(--ink2)}
+.note{font-size:8.1px;color:var(--mute);background:#E8EEF5;border-left:3px solid var(--blue);padding:4px 8px;border-radius:4px;flex:none}.note b{color:var(--ink2)}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;height:112px;flex:none}.kpi{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;display:flex;flex-direction:column}.kpi.quality{box-shadow:inset 3px 0 0 var(--blue)}.kpi.alert{box-shadow:inset 3px 0 0 var(--red);background:#FFFCFC}.kpi h3{font-size:10.3px;color:var(--ink2)}.def{font-size:8px;color:var(--mute2);line-height:1.25;margin-top:2px;min-height:19px}.val{display:flex;align-items:baseline;gap:5px;margin-top:2px}.val b{font-size:24px;letter-spacing:-.6px}.val span{font-size:8.8px;color:var(--mute)}.kpi.alert .val b{color:var(--red2)}.delta{font-size:8.5px;font-weight:600;margin-top:3px}.bad{color:var(--red2)}.watch{color:var(--amber2)}.good{color:var(--green2)}.foot{font-size:7.7px;color:var(--mute2);margin-top:auto;padding-top:4px;line-height:1.25}
+.row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:7px;min-height:0}.r1{height:199px;flex:none}.r2{flex:1}.s5{grid-column:span 5}.s7{grid-column:span 7}.card{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 10px;overflow:hidden;min-width:0}.chead{display:flex;justify-content:space-between;align-items:center;gap:8px}.ctitle{font-size:10.8px;font-weight:700}.sub{font-size:7.9px;color:var(--mute2);margin-top:2px;line-height:1.25}.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}.legend span{font-size:7.4px;color:var(--mute);display:flex;align-items:center;gap:4px}.sw{width:12px;height:2px;background:var(--blue);display:inline-block}.sw.dash{border-top:2px dashed var(--blue);height:0;background:none}.sw.red{background:var(--red)}.sw.target{border-top:1.5px dashed #475569;height:0;background:none}
+svg{width:100%;height:auto;display:block}.axis{font-size:7px;fill:#94A3B8}.grid{stroke:#EEF2F6;stroke-width:1}.axisline{stroke:#CBD5E1;stroke-width:1}.blue{stroke:var(--blue2);stroke-width:2.2;fill:none}.forecast{stroke:var(--blue2);stroke-width:2.2;stroke-dasharray:6 4;fill:none}.redline{stroke:var(--red);stroke-width:2.2;fill:none}.targetline{stroke:#475569;stroke-width:1.2;stroke-dasharray:4 4}.ptb{fill:var(--blue2)}.ptr{fill:var(--red)}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:5px}.split>div+div{border-left:1px solid var(--line2);padding-left:11px}.minihead{font-size:7.8px;font-weight:700;color:var(--mute);letter-spacing:.25px;margin-bottom:4px}.riskrow{display:grid;grid-template-columns:66px 1fr 24px;gap:5px;align-items:center;margin:4px 0}.riskrow span{font-size:8px;color:var(--ink2)}.riskrow b{font-size:8.2px;text-align:right}.track,.ctrack{height:6px;background:#F1F5F9;border-radius:3px;overflow:hidden}.fill,.ctrack i{display:block;height:100%;border-radius:3px;background:var(--navy2)}.fill.r{background:var(--red)}.fill.a{background:var(--amber)}.fill.g{background:var(--green)}.riskfoot{font-size:7.2px;color:var(--mute2);margin-top:4px;line-height:1.25;background:#F8FAFC;border-radius:4px;padding:4px 5px}.con{display:grid;grid-template-columns:90px 1fr 20px;gap:4px;align-items:center;margin:3px 0}.con span{font-size:7.3px;color:var(--ink2)}.con b{font-size:7.6px;text-align:right}
+.pipeline-table{width:100%;border-collapse:collapse;margin-top:5px}.pipeline-table th{font-size:7px;color:var(--mute2);font-weight:600;text-align:right;padding:3px 4px;border-bottom:1px solid var(--line)}.pipeline-table th:first-child,.pipeline-table th:nth-child(2){text-align:left}.pipeline-table td{font-size:7.7px;color:var(--ink2);padding:4px;border-bottom:1px solid var(--line2);text-align:right}.pipeline-table td:first-child,.pipeline-table td:nth-child(2){text-align:left}.pipeline-table tr:last-child td{border-bottom:0}.activecell{display:flex;align-items:center;gap:5px}.activebar{height:6px;background:var(--navy);border-radius:2px;display:inline-block}.hist{font-weight:700}.hot{color:var(--red2)!important;font-weight:700}.sla{color:var(--mute2)}.flagbox{font-size:7.4px;color:#B91C1C;background:var(--redbg);padding:4px 6px;border-radius:5px;margin-top:5px;line-height:1.25}.flagbox b{color:var(--red2)}
+.qualitychart{display:flex;flex-direction:column;height:100%}.qualitychart .plot{flex:1;min-height:0;margin-top:2px}.qualitynote{font-size:7.2px;color:var(--mute);line-height:1.25;margin-top:3px;background:#F8FAFC;border-radius:5px;padding:4px 6px}.qualitynote b{color:var(--ink2)}
+.footer{font-size:7.3px;color:var(--mute2);display:flex;justify-content:space-between;gap:12px;flex:none}.footer b{color:var(--ink2)}
 @media(max-width:1320px){body{display:block;padding:0}.app{border-radius:0}}
 </style>
 </head>
@@ -45,105 +39,91 @@ svg{width:100%;height:auto;display:block}.axis{font-size:7px;fill:#94A3B8}.grid{
     </div>
   </div>
 
-  <div class="note"><b>Filter behavior:</b> THD controls demand-oriented visuals. The 60-Day Early Attrition KPI and Speed vs Quality chart use fully matured employee-start cohorts and ignore the THD range; Business Unit, Job Family, and Job Level still apply.</div>
+  <div class="note"><b>Filter behavior:</b> THD controls demand, risk, pipeline, and forecast visuals. Quality visuals use fully matured employee-start cohorts and ignore the THD range; Business Unit, Job Family, and Job Level still apply.</div>
 
   <div class="kpis">
-    <section class="kpi">
-      <h3>Fill Rate</h3><div class="def">Positions filled ÷ requested positions, attributed by Target Hire Date.</div>
-      <div class="val"><b>84.6%</b><span>vs 90% target</span></div><div class="delta watch">Below target</div>
-      <div class="foot">Demand 1,126 · Filled 953 · Open 173</div>
-    </section>
-    <section class="kpi">
-      <h3>Median Time to Fill</h3><div class="def">Offer Accepted Date − Requisition Approval Date.</div>
-      <div class="val"><b>38</b><span>days</span></div><div class="delta good">Accepted offers only</div>
-      <div class="foot">Median used to reduce the effect of long-tail cycle-time outliers.</div>
-    </section>
-    <section class="kpi alert">
-      <h3>At-Risk Open Positions</h3><div class="def">Missed + High Risk + Medium Risk based only on days to source TOAD.</div>
-      <div class="val"><b>61</b><span>of 173 open</span></div><div class="delta bad">35% of open positions</div>
-      <div class="foot">Missed &lt;0 · High 0–7 · Medium 8–14 · On Track ≥15 days</div>
-    </section>
-    <section class="kpi quality">
-      <h3>60-Day Early Attrition</h3><div class="def">Terminations within 60 days ÷ hires in fully matured 60-day start cohorts.</div>
-      <div class="val"><b>8.2%</b><span>quality KPI</span></div><div class="delta watch">Rolling 12 matured cohorts</div>
-      <div class="foot">Latest fully matured start cohort: Mar 2026 · recent immature hires excluded.</div>
-    </section>
+    <section class="kpi"><h3>Fill Rate</h3><div class="def">Positions filled ÷ requested positions, attributed by Target Hire Date.</div><div class="val"><b>84.6%</b><span>vs 90% target</span></div><div class="delta watch">Below target</div><div class="foot">Demand 1,126 · Filled 953 · Open 173</div></section>
+    <section class="kpi"><h3>Median Time to Fill</h3><div class="def">Offer Accepted Date − Requisition Approval Date.</div><div class="val"><b>38</b><span>days</span></div><div class="delta good">Accepted offers only</div><div class="foot">Median reduces the effect of long-tail cycle-time outliers.</div></section>
+    <section class="kpi alert"><h3>At-Risk Open Positions</h3><div class="def">Missed + High Risk + Medium Risk based only on days to source TOAD.</div><div class="val"><b>61</b><span>of 173 open</span></div><div class="delta bad">35.3% of open positions</div><div class="foot">Missed &lt;0 · High 0–7 · Medium 8–14 · On Track ≥15 days</div></section>
+    <section class="kpi quality"><h3>60-Day Early Attrition</h3><div class="def">Terminations within 60 days ÷ hires in fully matured 60-day start cohorts.</div><div class="val"><b>8.2%</b><span>quality KPI</span></div><div class="delta watch">Rolling 12 matured cohorts</div><div class="foot">87 early exits ÷ 1,064 matured hires · latest fully matured cohort: Mar 2026</div></section>
   </div>
 
   <div class="row r1">
     <section class="card s7">
-      <div class="chead"><div><div class="ctitle">Actual Fill Rate vs Forecast Fill Rate</div><div class="sub">THD-month attainment with expected fills from the live candidate pipeline.</div></div><div class="legend"><span><i class="sw"></i>Actual</span><span><i class="sw dash"></i>Forecast</span></div></div>
-      <svg viewBox="0 0 690 165" aria-label="Illustrative actual versus forecast fill rate trend">
-        <line x1="42" y1="18" x2="42" y2="138" class="axisline"/><line x1="42" y1="138" x2="674" y2="138" class="axisline"/>
-        <line x1="42" y1="35" x2="674" y2="35" class="grid"/><line x1="42" y1="70" x2="674" y2="70" class="grid"/><line x1="42" y1="105" x2="674" y2="105" class="grid"/>
-        <text x="5" y="38" class="axis">100%</text><text x="10" y="73" class="axis">90%</text><text x="10" y="108" class="axis">80%</text><text x="10" y="141" class="axis">70%</text>
-        <path d="M60 104 L155 97 L250 90 L345 85 L440 80" class="blue"/><path d="M440 80 L535 66 L620 53 L670 44" class="forecast"/>
-        <circle cx="60" cy="104" r="2.8" class="ptb"/><circle cx="155" cy="97" r="2.8" class="ptb"/><circle cx="250" cy="90" r="2.8" class="ptb"/><circle cx="345" cy="85" r="2.8" class="ptb"/><circle cx="440" cy="80" r="2.8" class="ptb"/>
-        <text x="51" y="155" class="axis">Jan</text><text x="146" y="155" class="axis">Feb</text><text x="241" y="155" class="axis">Mar</text><text x="336" y="155" class="axis">Apr</text><text x="431" y="155" class="axis">May</text><text x="526" y="155" class="axis">Jun</text><text x="611" y="155" class="axis">Jul</text>
+      <div class="chead"><div><div class="ctitle">Actual Fill Rate vs Forecast Fill Rate — Eventual Attainment</div><div class="sub">Same Jan–May 2026 THD selection as the page. Forecast estimates eventual accepted offers, not on-time delivery.</div></div><div class="legend"><span><i class="sw"></i>Actual</span><span><i class="sw dash"></i>Forecast eventual</span><span><i class="sw target"></i>90% target</span></div></div>
+      <svg viewBox="0 0 690 153" aria-label="Illustrative actual and forecast eventual fill rate trend">
+        <line x1="42" y1="18" x2="42" y2="130" class="axisline"/><line x1="42" y1="130" x2="674" y2="130" class="axisline"/>
+        <line x1="42" y1="31" x2="674" y2="31" class="grid"/><line x1="42" y1="64" x2="674" y2="64" class="grid"/><line x1="42" y1="97" x2="674" y2="97" class="grid"/>
+        <line x1="42" y1="64" x2="674" y2="64" class="targetline"/><text x="610" y="59" class="axis">90% target</text>
+        <text x="5" y="34" class="axis">100%</text><text x="10" y="67" class="axis">90%</text><text x="10" y="100" class="axis">80%</text><text x="10" y="133" class="axis">70%</text>
+        <path d="M72 96 L212 90 L352 85 L492 83 L632 81" class="blue"/>
+        <path d="M72 71 L212 66 L352 62 L492 59 L632 57" class="forecast"/>
+        <circle cx="72" cy="96" r="2.8" class="ptb"/><circle cx="212" cy="90" r="2.8" class="ptb"/><circle cx="352" cy="85" r="2.8" class="ptb"/><circle cx="492" cy="83" r="2.8" class="ptb"/><circle cx="632" cy="81" r="2.8" class="ptb"/>
+        <text x="64" y="146" class="axis">Jan</text><text x="204" y="146" class="axis">Feb</text><text x="344" y="146" class="axis">Mar</text><text x="484" y="146" class="axis">Apr</text><text x="624" y="146" class="axis">May</text>
       </svg>
-      <div class="sub">Forecast uses stage-to-acceptance yield by Business Unit + Job Family + Job Level + Stage where stable, with broader fallback segments and a requisition-level cap at remaining open positions.</div>
+      <div class="sub">Forecast uses active-pipeline stage-to-acceptance yield with a requisition-level cap at remaining openings. A position may forecast as eventually filled even after missing TOAD; risk measures timeliness, while this forecast measures eventual attainment.</div>
     </section>
 
     <section class="card s5">
-      <div class="ctitle">Open Positions by Risk Band</div><div class="sub">Risk is determined only by TOAD versus the fixed reporting as-of date.</div>
-      <div class="risk">
-        <div class="riskrow"><span>Missed</span><div class="track"><div class="fill r" style="width:20%"></div></div><b>22</b></div>
-        <div class="riskrow"><span>High Risk</span><div class="track"><div class="fill r" style="width:17%"></div></div><b>19</b></div>
-        <div class="riskrow"><span>Medium Risk</span><div class="track"><div class="fill a" style="width:18%"></div></div><b>20</b></div>
-        <div class="riskrow"><span>On Track</span><div class="track"><div class="fill g" style="width:100%"></div></div><b>112</b></div>
-      </div>
-      <div class="riskfoot"><b>61 at risk</b> = Missed + High + Medium. Counts use <code>openings_position</code>, not requisition count. Pipeline strength does not override TOAD risk.</div>
-    </section>
-  </div>
-
-  <div class="row r2">
-    <section class="card s4">
-      <div class="ctitle">Pipeline Health & Hiring Constraints</div><div class="sub">Where candidates are concentrated and what is blocking open demand.</div>
+      <div class="ctitle">Open Position Risk & Hiring Constraints</div><div class="sub">Risk is TOAD-based; constraints explain the current open-demand pressure.</div>
       <div class="split">
-        <div>
-          <div class="minihead">ACTIVE FUNNEL</div>
-          <div class="funnel">
-            <div class="stage"><b>620</b><div class="bar" style="height:88px">620</div><span>Review</span></div><div class="conv">46%</div>
-            <div class="stage"><b>286</b><div class="bar" style="height:69px">286</div><span>Screen</span></div><div class="conv">61%</div>
-            <div class="stage"><b>175</b><div class="bar" style="height:54px">175</div><span>Assess</span></div><div class="conv">54%</div>
-            <div class="stage"><b>95</b><div class="bar" style="height:40px">95</div><span>Interview</span></div><div class="conv">43%</div>
-            <div class="stage"><b>41</b><div class="bar" style="height:25px">41</div><span>Offer</span></div>
-          </div>
-          <div class="flagbox"><b>Watch:</b> Interview → Offer shows the weakest completed historical conversion in this example. Active candidates are not treated as failed conversions.</div>
+        <div><div class="minihead">OPEN POSITIONS BY RISK BAND</div>
+          <div class="riskrow"><span>Missed</span><div class="track"><i class="fill r" style="width:20%"></i></div><b>22</b></div>
+          <div class="riskrow"><span>High Risk</span><div class="track"><i class="fill r" style="width:17%"></i></div><b>19</b></div>
+          <div class="riskrow"><span>Medium Risk</span><div class="track"><i class="fill a" style="width:18%"></i></div><b>20</b></div>
+          <div class="riskrow"><span>On Track</span><div class="track"><i class="fill g" style="width:100%"></i></div><b>112</b></div>
+          <div class="riskfoot"><b>61 at risk</b> = 35.3% of 173 open positions. Pipeline strength does not override TOAD risk.</div>
         </div>
-        <div>
-          <div class="minihead">OPEN POSITIONS BY PRIMARY CONSTRAINT</div>
+        <div><div class="minihead">OPEN POSITIONS BY PRIMARY CONSTRAINT</div>
           <div class="con"><span>Qualified candidates</span><div class="ctrack"><i style="width:100%"></i></div><b>48</b></div>
           <div class="con"><span>Hiring manager delay</span><div class="ctrack"><i style="width:73%"></i></div><b>35</b></div>
           <div class="con"><span>Compensation</span><div class="ctrack"><i style="width:52%"></i></div><b>25</b></div>
           <div class="con"><span>Interview capacity</span><div class="ctrack"><i style="width:38%"></i></div><b>18</b></div>
           <div class="con"><span>Niche skills</span><div class="ctrack"><i style="width:29%"></i></div><b>14</b></div>
           <div class="con"><span>No material constraint</span><div class="ctrack"><i style="width:69%;background:var(--green)"></i></div><b>33</b></div>
-          <div class="sub" style="margin-top:7px">Constraint is requisition-level and weighted by open positions, so multi-position requisitions carry the correct executive impact.</div>
+          <div class="riskfoot">Constraint is requisition-level and weighted by <code>openings_position</code>. Mix reconciles to 173.</div>
         </div>
       </div>
     </section>
+  </div>
 
-    <section class="card s8 qualitychart">
-      <div class="chead"><div><div class="ctitle">Speed vs 60-Day Early Attrition</div><div class="sub">Median Time to Fill and 60-Day Early Attrition for the same fully matured employee-start cohorts.</div></div><div class="legend"><span><i class="sw"></i>Time to Fill · left axis</span><span><i class="sw red"></i>60-Day Attrition · right axis</span></div></div>
+  <div class="row r2">
+    <section class="card s5">
+      <div class="ctitle">Pipeline Health: Snapshot vs Historical Performance</div><div class="sub">Active volume is a current snapshot. Conversion and median days use completed historical stage movements.</div>
+      <table class="pipeline-table">
+        <thead><tr><th>Stage</th><th>Active now</th><th>Historical conversion</th><th>Median completed days</th><th>SLA</th></tr></thead>
+        <tbody>
+          <tr><td>Review</td><td><div class="activecell"><i class="activebar" style="width:58px"></i>620</div></td><td class="hist">52%</td><td>3.2 d</td><td class="sla">3 d</td></tr>
+          <tr><td>Screen</td><td><div class="activecell"><i class="activebar" style="width:27px"></i>286</div></td><td class="hist">68%</td><td>4.1 d</td><td class="sla">4 d</td></tr>
+          <tr><td>Assessment</td><td><div class="activecell"><i class="activebar" style="width:17px"></i>175</div></td><td class="hist">59%</td><td>5.0 d</td><td class="sla">4 d</td></tr>
+          <tr><td>Interview</td><td><div class="activecell"><i class="activebar" style="width:10px"></i>95</div></td><td class="hist hot">43%</td><td class="hot">8.4 d</td><td class="sla">5 d</td></tr>
+          <tr><td>Offer</td><td><div class="activecell"><i class="activebar" style="width:6px"></i>41</div></td><td class="hist">78%</td><td>3.6 d</td><td class="sla">3 d</td></tr>
+        </tbody>
+      </table>
+      <div class="flagbox"><b>Watch: Interview.</b> Historical Interview → Offer conversion is 43%, and completed interviews take a median 8.4 days versus a 5-day SLA. The 43% is deliberately not calculated as 41 active offers ÷ 95 active interviews.</div>
+    </section>
+
+    <section class="card s7 qualitychart">
+      <div class="chead"><div><div class="ctitle">Speed vs 60-Day Early Attrition</div><div class="sub">Median Time to Fill and quality for the same 12 fully matured employee-start cohorts.</div></div><div class="legend"><span><i class="sw"></i>Time to Fill · left axis</span><span><i class="sw red"></i>60-Day Attrition · right axis</span></div></div>
       <div class="plot">
-        <svg viewBox="0 0 790 205" aria-label="Illustrative dual axis chart of time to fill versus 60-day attrition">
-          <line x1="45" y1="20" x2="45" y2="166" class="axisline"/><line x1="748" y1="20" x2="748" y2="166" class="axisline"/><line x1="45" y1="166" x2="748" y2="166" class="axisline"/>
-          <line x1="45" y1="47" x2="748" y2="47" class="grid"/><line x1="45" y1="86" x2="748" y2="86" class="grid"/><line x1="45" y1="125" x2="748" y2="125" class="grid"/>
-          <text x="4" y="25" class="axis">55 d</text><text x="4" y="64" class="axis">45 d</text><text x="4" y="103" class="axis">35 d</text><text x="4" y="142" class="axis">25 d</text>
-          <text x="757" y="25" class="axis">14%</text><text x="757" y="64" class="axis">10%</text><text x="757" y="103" class="axis">6%</text><text x="757" y="142" class="axis">2%</text>
-          <path d="M65 58 L125 66 L185 77 L245 71 L305 88 L365 95 L425 102 L485 98 L545 111 L605 106 L665 117 L725 122" class="blue"/>
-          <path d="M65 98 L125 91 L185 104 L245 95 L305 107 L365 112 L425 109 L485 118 L545 114 L605 124 L665 121 L725 128" class="redline"/>
-          <g class="ptb"><circle cx="65" cy="58" r="2.6"/><circle cx="125" cy="66" r="2.6"/><circle cx="185" cy="77" r="2.6"/><circle cx="245" cy="71" r="2.6"/><circle cx="305" cy="88" r="2.6"/><circle cx="365" cy="95" r="2.6"/><circle cx="425" cy="102" r="2.6"/><circle cx="485" cy="98" r="2.6"/><circle cx="545" cy="111" r="2.6"/><circle cx="605" cy="106" r="2.6"/><circle cx="665" cy="117" r="2.6"/><circle cx="725" cy="122" r="2.6"/></g>
-          <g class="ptr"><circle cx="65" cy="98" r="2.6"/><circle cx="125" cy="91" r="2.6"/><circle cx="185" cy="104" r="2.6"/><circle cx="245" cy="95" r="2.6"/><circle cx="305" cy="107" r="2.6"/><circle cx="365" cy="112" r="2.6"/><circle cx="425" cy="109" r="2.6"/><circle cx="485" cy="118" r="2.6"/><circle cx="545" cy="114" r="2.6"/><circle cx="605" cy="124" r="2.6"/><circle cx="665" cy="121" r="2.6"/><circle cx="725" cy="128" r="2.6"/></g>
-          <text x="51" y="184" class="axis">Apr 25</text><text x="112" y="184" class="axis">May</text><text x="172" y="184" class="axis">Jun</text><text x="232" y="184" class="axis">Jul</text><text x="292" y="184" class="axis">Aug</text><text x="352" y="184" class="axis">Sep</text><text x="412" y="184" class="axis">Oct</text><text x="472" y="184" class="axis">Nov</text><text x="532" y="184" class="axis">Dec</text><text x="592" y="184" class="axis">Jan 26</text><text x="655" y="184" class="axis">Feb</text><text x="716" y="184" class="axis">Mar</text>
+        <svg viewBox="0 0 790 205" aria-label="Illustrative dual-axis chart of time to fill versus 60-day attrition">
+          <line x1="45" y1="20" x2="45" y2="164" class="axisline"/><line x1="748" y1="20" x2="748" y2="164" class="axisline"/><line x1="45" y1="164" x2="748" y2="164" class="axisline"/>
+          <line x1="45" y1="47" x2="748" y2="47" class="grid"/><line x1="45" y1="86" x2="748" y2="86" class="grid"/><line x1="45" y1="125" x2="748" y2="125" class="grid"/><line x1="45" y1="164" x2="748" y2="164" class="grid"/>
+          <text x="4" y="50" class="axis">55 d</text><text x="4" y="89" class="axis">45 d</text><text x="4" y="128" class="axis">35 d</text><text x="4" y="167" class="axis">25 d</text>
+          <text x="757" y="50" class="axis">14%</text><text x="757" y="89" class="axis">10%</text><text x="757" y="128" class="axis">6%</text><text x="757" y="167" class="axis">2%</text>
+          <path d="M65 86 L125 94 L185 106 L245 98 L305 113 L365 117 L425 125 L485 121 L545 133 L605 129 L665 141 L725 145" class="blue"/>
+          <path d="M65 91 L125 110 L185 88 L245 94 L305 106 L365 99 L425 105 L485 97 L545 102 L605 106 L665 123 L725 118" class="redline"/>
+          <g class="ptb"><circle cx="65" cy="86" r="2.5"/><circle cx="125" cy="94" r="2.5"/><circle cx="185" cy="106" r="2.5"/><circle cx="245" cy="98" r="2.5"/><circle cx="305" cy="113" r="2.5"/><circle cx="365" cy="117" r="2.5"/><circle cx="425" cy="125" r="2.5"/><circle cx="485" cy="121" r="2.5"/><circle cx="545" cy="133" r="2.5"/><circle cx="605" cy="129" r="2.5"/><circle cx="665" cy="141" r="2.5"/><circle cx="725" cy="145" r="2.5"/></g>
+          <g class="ptr"><circle cx="65" cy="91" r="2.5"/><circle cx="125" cy="110" r="2.5"/><circle cx="185" cy="88" r="2.5"/><circle cx="245" cy="94" r="2.5"/><circle cx="305" cy="106" r="2.5"/><circle cx="365" cy="99" r="2.5"/><circle cx="425" cy="105" r="2.5"/><circle cx="485" cy="97" r="2.5"/><circle cx="545" cy="102" r="2.5"/><circle cx="605" cy="106" r="2.5"/><circle cx="665" cy="123" r="2.5"/><circle cx="725" cy="118" r="2.5"/></g>
+          <text x="51" y="181" class="axis">Apr 25</text><text x="112" y="181" class="axis">May</text><text x="172" y="181" class="axis">Jun</text><text x="232" y="181" class="axis">Jul</text><text x="292" y="181" class="axis">Aug</text><text x="352" y="181" class="axis">Sep</text><text x="412" y="181" class="axis">Oct</text><text x="472" y="181" class="axis">Nov</text><text x="532" y="181" class="axis">Dec</text><text x="592" y="181" class="axis">Jan 26</text><text x="655" y="181" class="axis">Feb</text><text x="716" y="181" class="axis">Mar</text>
+          <text x="55" y="196" class="axis">n=74</text><text x="115" y="196" class="axis">80</text><text x="175" y="196" class="axis">82</text><text x="235" y="196" class="axis">76</text><text x="295" y="196" class="axis">88</text><text x="355" y="196" class="axis">92</text><text x="415" y="196" class="axis">86</text><text x="475" y="196" class="axis">90</text><text x="535" y="196" class="axis">95</text><text x="595" y="196" class="axis">100</text><text x="655" y="196" class="axis">96</text><text x="715" y="196" class="axis">105</text>
         </svg>
       </div>
-      <div class="qualitynote"><b>Cohort rule:</b> each point uses hires who started in that month and completed the full 60-day observation window by 31 May 2026. Time to Fill is re-cohorted to those same hires. Expose cohort size and flag or suppress low-volume months using a configured minimum sample-size rule. The chart shows association, not causation.</div>
+      <div class="qualitynote"><b>Weighted KPI reconciliation:</b> 87 early exits ÷ 1,064 matured hires = 8.18%, displayed as 8.2%. The KPI is not the simple average of the 12 monthly percentages. Axis labels are aligned to their gridlines. Cohort size is shown under each month; the chart is diagnostic association, not causation.</div>
     </section>
   </div>
 
-  <div class="footer"><span><b>Executive story:</b> demand → delivery → risk → pipeline → expected outcome → quality.</span><span><b>Model guardrail:</b> position quantities must not be duplicated by candidate-level joins; quality uses matured start cohorts while demand metrics use THD.</span></div>
+  <div class="footer"><span><b>Executive story:</b> demand → delivery → speed → risk → pipeline → quality → expected outcome.</span><span><b>Model guardrail:</b> active funnel snapshot, historical conversion, and completed stage duration remain separate populations; quality uses matured start cohorts while demand metrics use THD.</span></div>
 </div>
 </body>
 </html>
