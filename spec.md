@@ -1,10 +1,10 @@
-# TA Executive Analytics — Project Specification
+# TA Executive Dashboard — Project Specification
 
 ## 1. Project overview
 
 This project builds the analytics-ready data layer for a **Talent Acquisition Executive Summary** report in Power BI.
 
-The project is intentionally limited to the **Executive Summary page only**. It should provide a small, governed set of dimensions, facts, marts, metric definitions, and validation rules needed to answer the most important questions a TA executive asks about hiring delivery, open-position risk, pipeline health, and expected future attainment.
+The project is intentionally limited to the **Executive Summary page only**. It should provide a small, governed set of dimensions, facts, marts, metric definitions, and validation rules needed to answer the most important questions a TA executive asks about hiring delivery, open-position risk, pipeline health, and expected future offer accepts.
 
 The project is designed as a portfolio-quality analytics engineering example. The priority is not to reproduce every possible recruiting metric. The priority is to demonstrate a clear business problem, trustworthy metric logic, realistic data relationships, reproducible transformations, and Power BI-ready outputs.
 
@@ -14,8 +14,6 @@ Primary users:
 
 - VP / Head of Talent Acquisition
 - TA leaders and recruiting operations leaders
-- Business unit leaders
-- People / Workforce Analytics teams
 
 Secondary users:
 
@@ -31,7 +29,7 @@ The Executive Summary should allow a TA leader to answer five questions quickly:
 
 1. **Are we filling the hiring demand the business needs?**
 2. **Are we hiring fast enough?**
-3. **Which open positions are most likely to miss their required offer date?**
+3. **Which open positions are most likely to miss their target offer acceptance date (TOAD)?**
 4. **Is the active recruiting pipeline strong enough to meet future demand?**
 5. **Where in the recruiting process are the main constraints or conversion problems?**
 
@@ -68,8 +66,6 @@ The project includes only data and business logic required for the **Executive S
 
 The following are explicitly excluded from this phase:
 
-- Early Attrition
-- retention metrics
 - NPS
 - recruiter scorecards
 - recruiter productivity and capacity
@@ -82,7 +78,7 @@ The following are explicitly excluded from this phase:
 - demand planning beyond what is required for the Executive Summary
 - operational case-management workflows
 
-These subjects may be added later as separate project phases, but they must not increase the complexity of the current Executive Summary data model.
+These subjects may be added later as separate project phases.
 
 ---
 
@@ -123,7 +119,7 @@ Examples of actual dates that must not be later than May 31, 2026:
 - offer accepted date
 - offer declined date
 - candidate withdrawal date
-- candidate start date, if present in source data
+- candidate start date
 
 ---
 
