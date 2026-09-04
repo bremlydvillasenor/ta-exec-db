@@ -4,7 +4,7 @@
 
 This project builds the analytics-ready data layer for a **Talent Acquisition Executive Summary** report in Power BI.
 
-The project is intentionally limited to the **Executive Summary page only**. It should provide a small, governed set of dimensions, facts, marts, metric definitions, and validation rules needed to answer the most important questions a TA executive asks about hiring delivery, open-position risk, pipeline health, and expected future offer accepts.
+The project is intentionally limited to the **Executive Summary page only**. It should provide a small, governed set of dimensions, facts, marts, metric definitions, and validation rules needed to answer the most important questions a TA executive asks about hiring delivery, speed, open-position risk, pipeline health, hiring quality, and expected future offer accepts.
 
 The project is designed as a portfolio-quality analytics engineering example. The priority is not to reproduce every possible recruiting metric. The priority is to demonstrate a clear business problem, trustworthy metric logic, realistic data relationships, reproducible transformations, and Power BI-ready outputs.
 
@@ -25,13 +25,14 @@ Secondary users:
 
 ## 2. Project objective
 
-The Executive Summary should allow a TA leader to answer five questions quickly:
+The Executive Summary should allow a TA leader to answer six questions quickly:
 
 1. **Are we filling the hiring demand the business needs?**
 2. **Are we hiring fast enough?**
 3. **Which open positions are most likely to miss their target offer acceptance date (TOAD)?**
 4. **Is the active recruiting pipeline strong enough to meet future demand?**
 5. **Where in the recruiting process are the main constraints or conversion problems?**
+6. **Are we hiring quickly without creating poor early-tenure outcomes?**
 
 The data layer must support these questions without requiring business logic to be recreated separately inside each Power BI visual.
 
@@ -56,6 +57,8 @@ The project includes only data and business logic required for the **Executive S
 - time in recruiting stage where data is available
 - active pipeline health
 - forecasted Fill Rate using active pipeline yield
+- **60-Day Early Attrition as the primary hiring-quality metric**
+- **speed-versus-quality trend using median Time to Fill and 60-Day Early Attrition**
 - Power BI-ready dimensional and fact datasets
 - executive-summary marts where useful
 - metric definitions
@@ -66,6 +69,9 @@ The project includes only data and business logic required for the **Executive S
 
 The following are explicitly excluded from this phase:
 
+- a standalone Early Attrition page
+- early attrition windows other than 60 days as primary Executive Summary metrics
+- broader retention analysis
 - NPS
 - recruiter scorecards
 - recruiter productivity and capacity
@@ -96,7 +102,7 @@ The fixed reporting as-of date is:
 
 **May 31, 2026.**
 
-Any logic using concepts such as `today`, `current`, `open`, `days remaining`, `latest`, or `at risk` must use this configured as-of date rather than the computer system date.
+Any logic using concepts such as `today`, `current`, `open`, `days remaining`, `latest`, `at risk`, or `matured cohort` must use this configured as-of date rather than the computer system date.
 
 This makes the project reproducible. Running the pipeline in the future must not change historical results unless the source data itself changes.
 
@@ -104,7 +110,7 @@ This makes the project reproducible. Running the pipeline in the future must not
 
 Requisitions may contain **Target Hire Dates through May 31, 2027**.
 
-Future Target Hire Dates are valid planning data and must be preserved. However, no actual recruiting event should occur after the reporting as-of date unless it is explicitly a planned or target date.
+Future Target Hire Dates are valid planning data and must be preserved. However, no actual recruiting or employment event should occur after the reporting as-of date unless it is explicitly a planned or target date.
 
 Examples of allowed future dates:
 
@@ -120,6 +126,7 @@ Examples of actual dates that must not be later than May 31, 2026:
 - offer declined date
 - candidate withdrawal date
 - candidate start date
+- termination date
 
 ---
 
@@ -137,7 +144,7 @@ A requisition may contain multiple positions. Executive delivery metrics therefo
 
 Target Hire Date is the date the business expects the person to start.
 
-THD is the primary demand date for the Executive Summary. It determines which period a requisition's positions belong to for demand, Fill Rate, open-position reporting, and most executive views.
+THD is the primary demand date for the Executive Summary. It determines which period a requisition's positions belong to for demand, Fill Rate, open-position reporting, and most delivery views.
 
 ### 5.3 Target Offer Acceptance Date (TOAD)
 
@@ -188,6 +195,26 @@ Examples may include:
 - no material constraint
 
 Because the constraint belongs to the requisition, every open position on that requisition inherits the same current primary constraint for executive reporting.
+
+### 5.7 Hire and start cohort
+
+A **hire** for the quality metric is a person who has actually started employment on or before the reporting as-of date.
+
+A **start cohort** groups hires by their employee start month. Start month, not THD or offer acceptance month, is the date basis for 60-Day Early Attrition because the 60-day observation period begins only when employment starts.
+
+### 5.8 Fully matured 60-day cohort
+
+A hire is 60-day matured when at least 60 calendar days have elapsed between the employee start date and the configured as-of date.
+
+For monthly reporting, a start month is considered **fully matured** only when every possible start date in that month has had the full 60-day observation window by the as-of date. This avoids presenting a partially observed month as if its attrition rate were complete.
+
+For the May 31, 2026 as-of date, the latest fully matured calendar start cohort is determined programmatically from this rule rather than hard-coded into visuals.
+
+### 5.9 Quality metric date behavior
+
+Demand-oriented visuals use THD as their reporting date. The 60-Day Early Attrition KPI and speed-versus-quality trend use **employee start cohort month** instead.
+
+The THD slicer must therefore **not** shorten or distort the 60-day quality observation window. Business Unit, Job Family, and Job Level filters may apply to both delivery and quality metrics where conformed keys are available.
 
 ---
 
@@ -275,7 +302,9 @@ The Executive Summary reports the **median**, not the average, because recruitin
 
 **Population:** accepted offers only.
 
-**Date basis for Executive Summary attribution:** Target Hire Date of the associated requisition.
+**Default date basis for delivery reporting:** Target Hire Date of the associated requisition.
+
+For the speed-versus-quality visual defined in EXEC-14, Time to Fill is re-cohorted by employee start month so it describes the same hires used in the attrition line.
 
 The calculation must not use future accepted offers after the reporting as-of date.
 
@@ -402,6 +431,70 @@ For active candidates still in their current stage, current age may be calculate
 
 ---
 
+### EXEC-13 — 60-Day Early Attrition
+
+**Business question:** Of the hires with a complete 60-day observation window, what percentage left the organization within their first 60 days?
+
+The Executive Summary uses 60-Day Early Attrition as its primary **hiring-quality outcome metric**.
+
+```text
+60-Day Early Attrition Rate =
+    Hires who terminated within 60 days of start
+    /
+    Hires in fully matured 60-day start cohorts
+```
+
+A termination qualifies when:
+
+```text
+0 <= Termination Date - Employee Start Date <= 60 days
+```
+
+**Date basis:** Employee start month.
+
+**KPI period:** rolling 12 months of fully matured start cohorts, ending with the latest fully matured start month available as of the configured reporting date.
+
+**Denominator:** hires in those fully matured start cohorts.
+
+**Numerator:** those same hires who terminated within 60 days of their employee start date.
+
+Hires who have not yet completed the full 60-day observation window must not enter the denominator.
+
+This project intentionally treats early attrition as a **cohort quality measure** for TA. It should not be mixed with a broader enterprise turnover metric that may use average headcount as its denominator.
+
+The KPI should support comparison with a configured quality target and, where useful, the immediately preceding matured 12-month period.
+
+---
+
+### EXEC-14 — Speed vs 60-Day Early Attrition
+
+**Business question:** When hiring becomes faster or slower, does early-tenure quality appear to move with it?
+
+This visual compares hiring speed and 60-day quality over time using the **same monthly start cohorts**.
+
+For each fully matured employee start month:
+
+```text
+Speed = Median Time to Fill for hires in the start cohort
+Quality = 60-Day Early Attrition Rate for the same start cohort
+```
+
+**Visual:** dual-axis line chart.
+
+- X-axis: employee start cohort month
+- Left Y-axis: median Time to Fill in days
+- Right Y-axis: 60-Day Early Attrition rate (%)
+- Population: fully matured 60-day start cohorts only
+- Recommended window: latest 12 fully matured monthly cohorts
+
+The Time to Fill line must use the hires represented in the same start cohort rather than the normal THD-based Executive Summary attribution. This keeps the comparison aligned.
+
+The visual is diagnostic, not causal. A relationship between faster hiring and higher or lower attrition may justify investigation, but the chart must not state that hiring speed caused the attrition outcome.
+
+Where the sample size for a monthly cohort is too small for a stable attrition rate, the model should expose cohort hire count so Power BI can flag or suppress low-volume points using a configured minimum cohort-size rule.
+
+---
+
 ## 7. Forecast Fill Rate
 
 ### 7.1 Business purpose
@@ -471,11 +564,12 @@ The data model must support the following page components.
 
 ### KPI cards
 
-1. **Fill Rate**
-2. **Median Time to Fill**
-3. **At-Risk Open Positions**
+1. **Fill Rate** — delivery
+2. **Median Time to Fill** — speed
+3. **At-Risk Open Positions** — execution risk
+4. **60-Day Early Attrition** — quality
 
-Supporting context such as requested positions, filled positions, or total open positions may be included as secondary labels or tooltips rather than additional primary KPI cards.
+Supporting context such as requested positions, filled positions, total open positions, matured hire count, or comparison to target may be included as secondary labels or tooltips rather than additional primary KPI cards.
 
 ### Core visuals
 
@@ -486,6 +580,7 @@ The Executive Summary should be able to support:
 - open positions by primary hiring constraint
 - recruiting funnel / stage volume with conversion context
 - stage conversion and/or stage-time bottleneck indicators
+- **Speed vs 60-Day Early Attrition dual-axis line chart using fully matured monthly start cohorts**
 - offer or pipeline outcome context where retained in the final wireframe
 
 The purpose of every visual should be to explain one of the executive questions in Section 2. Avoid visuals that provide detail without supporting an executive decision.
@@ -500,6 +595,10 @@ Required slicers / filters:
 - Job Level, if retained in the wireframe
 
 THD is the primary date filter for demand-oriented Executive Summary visuals.
+
+The 60-Day Early Attrition KPI and speed-versus-quality chart are **cohort-maturity visuals** and should not be truncated by the THD slicer. Their time window is controlled by the latest fully matured start cohort relative to the configured as-of date.
+
+Business Unit, Job Family, and Job Level filters should apply to the quality visuals where valid conformed attributes are available for the hire.
 
 The as-of date is a project configuration value and is not a user slicer.
 
@@ -582,6 +681,33 @@ Offer information may be stored in a separate fact or integrated into the applic
 - offer accepted date
 
 Accepted offers are required for positions filled, Time to Fill, conversion outcomes, and forecast training labels.
+
+### 9.5 Hire and termination data
+
+The project must include the minimum employee outcome data required to calculate 60-Day Early Attrition.
+
+Suggested table: `fct_hire_outcome`
+
+**Preferred grain:** one row per started hire.
+
+Minimum fields:
+
+- hire_key
+- candidate_key and/or worker_key
+- requisition_key
+- employee_start_date
+- termination_date, nullable
+- tenure_days_at_termination, nullable
+- is_60_day_matured
+- is_60_day_early_attrition
+- business_unit_key
+- job_family_key
+- job_level_key
+- offer_accepted_date
+- requisition_approval_date or a reliable link back to it
+- time_to_fill_days
+
+A hire should appear once at this grain. Multiple termination or worker-event source rows must be resolved before the executive quality mart is produced.
 
 ---
 
@@ -666,6 +792,28 @@ Suggested measures:
 - actual_fill_rate
 - forecast_fill_rate
 
+### `mart_exec_quality`
+
+Purpose: Executive Summary hiring-quality KPI and speed-versus-quality trend.
+
+Suggested grain:
+
+```text
+Employee Start Month + Business Unit + Job Family + Job Level
+```
+
+Suggested measures and fields:
+
+- matured_hires_60d
+- early_attrition_60d_count
+- early_attrition_60d_rate
+- median_time_to_fill_same_cohort
+- is_fully_matured_start_month
+- cohort_start_month
+- cohort_sample_size
+
+Only fully matured monthly cohorts should feed the Executive Summary trend. The KPI should aggregate the latest rolling 12 fully matured cohorts.
+
 Power BI may calculate final presentation measures in DAX, but complex row-level business logic should be produced upstream where practical and documented clearly.
 
 ---
@@ -681,7 +829,11 @@ The Executive Summary should allow a reviewer to observe relationships such as:
 - a visible connection between hiring constraints and risk exposure
 - a funnel bottleneck that helps explain weaker delivery
 - stronger or weaker active pipelines producing appropriately different forecast Fill Rates
+- meaningful variation in 60-Day Early Attrition between matured hire cohorts or business segments
+- periods where faster or slower Time to Fill can be compared with early attrition without forcing a perfect relationship
 - future demand extending beyond the as-of date without impossible future recruiting outcomes
+
+The speed-versus-quality data story should be realistic. The generated data must not artificially force a strong correlation between Time to Fill and Early Attrition merely to make the chart look interesting.
 
 The story must emerge from consistent underlying records. Dashboard values must not be independently hard-coded to produce a desired picture.
 
@@ -709,11 +861,12 @@ requested_positions = filled_positions + openings_position
 
 ### Date rules
 
-1. Actual recruiting events must not occur after the as-of date.
+1. Actual recruiting and employee events must not occur after the as-of date.
 2. Target dates may occur after the as-of date.
 3. Offer accepted date must not precede application chronology where source logic makes that impossible.
 4. Stage exit date must not precede stage entry date.
 5. Time to Fill must not be negative.
+6. Termination date must not precede employee start date.
 
 ### Pipeline rules
 
@@ -728,6 +881,18 @@ requested_positions = filled_positions + openings_position
 2. Risk counts must use `openings_position`.
 3. Risk band totals must reconcile to Total Open Positions for the same filter context.
 4. Requisition-level joins must not duplicate `openings_position` when candidate-level data is joined.
+
+### Quality rules
+
+1. Every hire used in 60-Day Early Attrition must have a valid employee start date.
+2. A hire must not enter the 60-day denominator until the full 60-day observation window has elapsed.
+3. Monthly trend points must use fully matured start months only.
+4. `is_60_day_early_attrition = true` only when termination occurs from day 0 through day 60 after start.
+5. 60-Day Early Attrition must remain between 0 and 1 before presentation formatting.
+6. The rolling KPI must use the latest 12 fully matured start cohorts, not the latest 12 calendar months regardless of maturity.
+7. The speed-versus-quality visual must calculate median Time to Fill from the same hire cohort used for the attrition point.
+8. Duplicate hire or termination rows must not inflate either the numerator or denominator.
+9. Cohort sample size must be available for quality checks and tooltip context.
 
 ### Forecast rules
 
@@ -750,7 +915,8 @@ The completed analytics project should provide:
 - application / pipeline fact
 - application stage-event fact
 - offer fields or offer fact as required
-- Executive Summary marts
+- hire / early-outcome fact
+- Executive Summary marts including quality
 - CSV or Parquet outputs suitable for Power BI
 
 ### Documentation
@@ -785,6 +951,8 @@ Requirements:
 - many-to-many relationships should be avoided unless there is a clear business reason
 - position quantities must not be duplicated through candidate-level joins
 - THD should connect cleanly to the date dimension for demand views
+- employee start date should support a separate cohort-date role for quality views
+- quality visuals must be able to ignore the THD slicer while retaining valid Business Unit, Job Family, and Job Level filters
 - metric logic must produce the same result whether calculated from the governed fact tables or validated against the executive marts
 - numeric measures should remain numeric; presentation formatting belongs in Power BI
 
@@ -796,7 +964,7 @@ Where a calculation is highly reusable and business-critical, prefer creating a 
 
 The Executive Summary data project is complete when all of the following are true:
 
-1. The project covers only the Executive Summary scope defined here.
+1. The project covers only the Executive Summary page scope defined here.
 2. Data is reproducible using an as-of date of May 31, 2026.
 3. Historical actual data covers January 2024 through May 31, 2026.
 4. Requisition THDs through May 31, 2027 are preserved for future-demand analysis.
@@ -810,9 +978,14 @@ The Executive Summary data project is complete when all of the following are tru
 12. Forecast Fill Rate uses active pipeline stage-to-acceptance yield segmented by Business Unit, Job Family, and Job Level where data supports it.
 13. Forecast expected fills are capped by remaining open positions.
 14. No future actual recruiting outcomes leak into historical metrics or forecast training data.
-15. Required dimensions, facts, marts, documentation, and schema definitions are produced.
-16. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
-17. Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
+15. 60-Day Early Attrition is included as the Executive Summary quality KPI.
+16. The 60-Day Early Attrition KPI uses a rolling 12-month window of fully matured start cohorts.
+17. Immature hires and incomplete start months do not enter the quality denominator or trend.
+18. The speed-versus-quality visual compares median Time to Fill and 60-Day Early Attrition for the same monthly matured hire cohorts.
+19. The speed-versus-quality visual is treated as diagnostic association, not evidence of causation.
+20. Required dimensions, facts, marts, documentation, and schema definitions are produced.
+21. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
+22. Standalone Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
 
 ---
 
@@ -822,6 +995,8 @@ The project should remain intentionally focused.
 
 A strong Executive Summary does not contain every recruiting metric. It gives leadership a concise view of:
 
-**demand → delivery → risk → pipeline → expected outcome.**
+**demand → delivery → speed → risk → pipeline → quality → expected outcome.**
 
-Every dataset, metric, and transformation included in this phase should support that story. If an element does not materially help explain one of those five areas, it should be excluded from the current project.
+Quality is represented by one governed outcome metric: **60-Day Early Attrition**. The purpose is to ensure the Executive Summary does not optimize only for filling roles quickly, but also shows whether those hires remain through the critical first 60 days.
+
+Every dataset, metric, and transformation included in this phase should support that story. If an element does not materially help explain one of these executive areas, it should be excluded from the current project.
