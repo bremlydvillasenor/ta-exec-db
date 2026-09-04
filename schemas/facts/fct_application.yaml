@@ -9,11 +9,14 @@ purpose: >
   (employer rescind, candidate renege, actual employee start) are modelled as
   their own dated events so history is never rewritten. The fact supports the
   active pipeline snapshot, active-fill reconciliation, Time to Fill (accepted
-  offers), historical offer-stage conversion and the stage-to-acceptance
+  offers), historical offer-stage conversion and the stage-to-active-fill
   probability of each active candidate used by the forecast.
   Offer data is integrated here rather than in a separate offer fact.
 
-grain: One row per application (one candidate applying to one requisition), state as of 2026-05-31.
+grain: >
+  One row per application (one candidate applying to one requisition), state as of
+  2026-05-31. At most ONE governed accepted-offer event per row - see
+  assumptions.one_acceptance_per_application.
 
 primary_key: [application_key]
 unique_keys:
@@ -37,6 +40,43 @@ semantics:
   hire: >
     A candidate who actually started employment (is_started = true). Only hires are
     used for hiring-quality analysis (fct_hire_outcome, 60-Day Early Attrition).
+
+assumptions:
+  one_acceptance_per_application:
+    statement: >
+      One application contributes AT MOST ONE governed accepted-offer event. The offer
+      columns on this fact (is_offer_accepted_event, offer_accepted_date,
+      time_to_fill_days, post_acceptance_outcome and the rescind / renege / start
+      columns) describe that single event. There is no support here for a second
+      acceptance on the same application.
+    why_it_holds: >
+      Every offer-based metric in this contract counts applications, and every
+      identity depends on it: accepted_offer_events = COUNT(is_offer_accepted_event)
+      at application grain, filled_positions = COUNT(is_active_fill), one accepted
+      offer = one seat, and Time to Fill is one duration per application. A second
+      acceptance on the same row would double-count a seat with no way to tell the two
+      events apart.
+    upstream_responsibility: >
+      Multiple offer versions before final acceptance - revised salary, revised start
+      date, a re-issued offer letter, an offer amended after verbal acceptance - are
+      offer VERSIONS, not separate acceptance events. They must be resolved upstream to
+      the single governed acceptance: normally the earliest acceptance date of the
+      offer the candidate actually accepted. The resolution rule belongs in the
+      transformation, not in Power BI, and must be documented where it is applied.
+    what_is_not_covered: >
+      A genuine re-offer cycle - the candidate accepts, the offer is rescinded or the
+      candidate reneges, and later the SAME candidate is re-offered and accepts again
+      for the same requisition - cannot be represented on one row. Today the source is
+      expected to produce a new application for the second attempt.
+    if_this_changes: >
+      If multiple acceptance or re-offer cycles per application become a real
+      requirement, introduce a separate offer-event fact (one row per offer event, with
+      an offer sequence number and its own accepted / rescinded / reneged dates) and
+      keep fct_application at one row per application, carrying the resolved current
+      state. Do NOT overload this fact with offer_accepted_date_2, an offer array, or a
+      repeated-group of offer columns: that would break the application grain, break
+      every COUNT-based identity above, and re-introduce exactly the kind of ambiguity
+      this contract version exists to remove.
 
 columns:
   # keys
@@ -214,10 +254,15 @@ columns:
       to Fill (EXEC-05).
 
   # ---------------------------------------------------------------- forecast inputs (active only)
-  - name: stage_to_acceptance_yield
+  - name: stage_to_active_fill_yield
     type: decimal(6,4)
     nullable: true
-    description: Historical probability of reaching an active fill from the current stage, looked up in mart_stage_yield by segment + stage with fallback. Populated only when is_active_pipeline.
+    description: >
+      Historical probability of reaching an ACTIVE FILL - an accepted offer not later
+      rescinded or reneged - from the current stage. Looked up in mart_stage_yield by
+      segment + stage with fallback. Populated only when is_active_pipeline.
+      Renamed from stage_to_acceptance_yield in v1.1: it predicts a fill that still
+      stands, not merely an acceptance event.
   - name: yield_segment_level
     type: string
     nullable: true
@@ -236,6 +281,8 @@ relationships:
 
 business_rules:
   - Offer acceptance is an immutable historical event. Once offer_accepted_date is set it is never cleared, overwritten or nulled by a later rescind, renege or requisition change.
+  - One application contributes at most one governed accepted-offer event. Multiple offer versions before final acceptance are resolved upstream to a single acceptance date; they are offer versions, not separate events. See assumptions.one_acceptance_per_application.
+  - Because acceptance is one-per-application, one accepted offer equals one seat. Every offer-based count in this contract is a COUNT of applications, which is what keeps accepted_offer_events, filled_positions and started_positions reconcilable at requisition grain.
   - Current status and historical event are separate columns. is_offer_accepted_event is derived from offer_accepted_date, never from application_status_current.
   - An application can be in at most one post-acceptance outcome at a time; is_offer_rescinded and is_candidate_renege are mutually exclusive.
   - A rescind or a withdrawal BEFORE acceptance is not a post-acceptance event. It uses offer_declined_date (offer never accepted) or withdrawal_date / disposition_reason, and post_acceptance_outcome stays null.
@@ -258,6 +305,8 @@ data_quality_tests:
   - {test: expression, expression: "has_final_outcome = NOT is_active_pipeline"}
   # --- the acceptance event is immutable and independent of current status
   - {test: expression, expression: "is_offer_accepted_event = (offer_accepted_date IS NOT NULL)", severity: error}
+  - {test: expression, expression: "at most one accepted-offer event per application_key - offer_accepted_date is a single scalar, never a list, and the source must not deliver two acceptance rows for one application", severity: error, notes: Guards the one-acceptance-per-application assumption. A source that can produce a second acceptance needs a separate offer-event fact, not extra columns here.}
+  - {test: reconciliation, expression: "the upstream offer resolution produced exactly one accepted offer version per application; a source application with more than one accepted offer version is rejected or resolved, never loaded as-is", severity: error}
   - {test: expression, expression: "is_offer_accepted_event IS NOT derived from application_status_current; a row with application_status_current IN ('offer_rescinded','candidate_renege') still has is_offer_accepted_event = true AND offer_accepted_date IS NOT NULL", severity: error}
   - {test: expression, expression: "application_status_current IN ('offer_accepted','started','offer_rescinded','candidate_renege') implies is_offer_accepted_event = true"}
   - {test: expression, expression: "application_status_current IN ('active','rejected','withdrawn','offer_declined') implies is_offer_accepted_event = false AND offer_accepted_date IS NULL"}
@@ -293,8 +342,8 @@ data_quality_tests:
   - {test: expression, expression: "application_status_current = 'withdrawn' implies withdrawal_date IS NOT NULL AND is_offer_accepted_event = false"}
   - {test: expression, expression: "is_offer_accepted_event implies disposition_reason IS NULL"}
   # --- forecast inputs
-  - {test: expression, expression: "is_active_pipeline implies active_stage_age_days = DATEDIFF(current_stage_entry_date, as_of_date) AND stage_to_acceptance_yield BETWEEN 0 AND 1 AND yield_segment_level IS NOT NULL"}
-  - {test: expression, expression: "NOT is_active_pipeline implies active_stage_age_days IS NULL AND stage_to_acceptance_yield IS NULL"}
+  - {test: expression, expression: "is_active_pipeline implies active_stage_age_days = DATEDIFF(current_stage_entry_date, as_of_date) AND stage_to_active_fill_yield BETWEEN 0 AND 1 AND yield_segment_level IS NOT NULL"}
+  - {test: expression, expression: "NOT is_active_pipeline implies active_stage_age_days IS NULL AND stage_to_active_fill_yield IS NULL"}
   # --- cross-dataset
   - {test: reconciliation, expression: "is_active_pipeline implies fct_requisition.is_open = true for requisition_key", severity: error}
   - {test: reconciliation, expression: "COUNT(is_active_fill) per requisition_key = fct_requisition.filled_positions", severity: error}
@@ -307,7 +356,7 @@ data_quality_tests:
 
 power_bi:
   hide_columns: [application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key]
-  summarization_off: [time_to_fill_days, active_stage_age_days, stage_to_acceptance_yield]
+  summarization_off: [time_to_fill_days, active_stage_age_days, stage_to_active_fill_yield]
   measures:
     - name: Median Time to Fill
       dax: MEDIAN(fct_application[time_to_fill_days])   -- blanks (no acceptance event) are ignored; rescinded and reneged accepted offers stay in

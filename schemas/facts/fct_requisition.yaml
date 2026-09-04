@@ -150,7 +150,7 @@ columns:
   - name: expected_pipeline_fills_uncapped
     type: decimal(10,4)
     nullable: true
-    description: SUM(stage_to_acceptance_yield) over active applications on the requisition. Null when not open.
+    description: SUM(stage_to_active_fill_yield) over active applications on the requisition. Null when not open.
   - name: expected_pipeline_fills
     type: decimal(10,4)
     nullable: true
@@ -180,6 +180,7 @@ business_rules:
   - Demand, Positions Filled, Open Positions and Fill Rate are all computed from this table alone.
   - filled_positions is CURRENT state, accepted_offer_events is HISTORY. Only filled_positions responds to a post-acceptance rescind or renege; accepted_offer_events never decreases and no accepted-offer event is ever deleted or back-dated away.
   - accepted_offer_events = filled_positions + lost_after_acceptance_positions on every requisition.
+  - One accepted offer equals one seat. This holds because fct_application allows at most one governed accepted-offer event per application (see its assumptions.one_acceptance_per_application); the three counts above are COUNTs of applications, so a second acceptance on one application would double-count a seat here.
   - started_positions <= filled_positions. An active fill that has not started yet is still a fill; it is not yet a hire.
   - When an accepted offer is rescinded or reneged the seat returns to open demand: filled_positions decreases by one and openings_position increases by one, so requested_positions is unchanged. If the business decides not to re-open the seat, the seat moves to cancelled_positions and requested_positions decreases instead. Either way the identity below still holds.
   - For non-cancelled requisitions requested_positions = filled_positions + openings_position always holds. A requisition whose remaining seats were withdrawn has those seats moved to cancelled_positions.

@@ -41,6 +41,32 @@ demand-side decision (budget freeze, reorg); a renege is a candidate-market sign
 (competing offer, counter-offer, a start date too far out). Both reopen the seat, but they
 point at different problems and different owners.
 
+### Scope limit: one acceptance per application
+
+**One application contributes at most one governed accepted-offer event.** One accepted
+offer equals one seat, so every offer-based figure is a COUNT of applications, which is what
+keeps `accepted_offer_events`, `filled_positions` and `started_positions` reconcilable at
+requisition grain.
+
+Multiple offer versions before final acceptance — a revised salary, a moved start date, a
+re-issued offer letter — are offer *versions*, not separate acceptance events. They must be
+resolved **upstream** to the single governed acceptance (normally the earliest acceptance
+date of the offer the candidate actually accepted), and the resolution rule must be
+documented where it is applied.
+
+Not covered today: a genuine re-offer cycle, where a candidate accepts, the offer is lost to
+a rescind or renege, and the same candidate is later re-offered and accepts again for the
+same requisition. The source is expected to produce a new application for the second
+attempt.
+
+If multiple acceptance or re-offer cycles per application become a real requirement,
+**introduce a separate offer-event fact** — one row per offer event, with an offer sequence
+number and its own accepted / rescinded / reneged dates — and keep `fct_application` at one
+row per application carrying the resolved current state. Do **not** overload `fct_application`
+with `offer_accepted_date_2`, an offer array, or a repeated group of offer columns: that
+breaks the application grain and every COUNT-based identity above. The full statement lives
+in `facts/fct_application.yaml` under `assumptions.one_acceptance_per_application`.
+
 ## Dataset inventory
 
 | Layer | Dataset | Grain | Rows (approx.) | Main job |
@@ -152,9 +178,9 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 1. `ref_reporting_config`, `ref_risk_band` (seed values from YAML)
 2. `dim_date`, `dim_start_cohort` (generated from config), `dim_recruiting_stage`, `dim_hiring_constraint` (seed rows), `dim_business_unit`, `dim_job_family`, `dim_job_level` (from source)
 3. `fct_requisition` (base columns: status, dates, quantities, constraint, risk band) — pipeline/forecast columns are filled in step 6
-4. `fct_application` (base columns, the offer-acceptance event, post-acceptance events and `employee_start_date`) and `fct_application_stage_event`. Derive `is_active_fill` and `post_acceptance_outcome` here; never overwrite `offer_accepted_date` when a rescind or renege is loaded.
+4. `fct_application` (base columns, the offer-acceptance event, post-acceptance events and `employee_start_date`) and `fct_application_stage_event`. Resolve multiple source offer versions to the single governed acceptance **before** this step. Derive `is_active_fill` and `post_acceptance_outcome` here; never overwrite `offer_accepted_date` when a rescind or renege is loaded.
 5. `mart_stage_yield` (from stage events + application outcomes with a final outcome; training label is `is_active_fill`)
-6. Apply yield: `fct_application.stage_to_acceptance_yield`; then `fct_requisition.active_pipeline_applications`, `expected_pipeline_fills_uncapped`, `expected_pipeline_fills` (capped at `openings_position`)
+6. Apply yield (stage-to-active-fill): `fct_application.stage_to_active_fill_yield`; then `fct_requisition.active_pipeline_applications`, `expected_pipeline_fills_uncapped`, `expected_pipeline_fills` (capped at `openings_position`)
 7. `fct_hire_outcome` (from applications with `is_started` = true + HR start/termination events, flags from `dim_start_cohort`). Accepted offers with no start - pending, rescinded or reneged - are correctly excluded here.
 8. `mart_exec_demand`, `mart_exec_risk`, `mart_exec_pipeline`, `mart_exec_quality`
 9. Reconciliation tests: marts vs facts (see each mart's `data_quality_tests`)
@@ -165,7 +191,7 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 2. **Requisition attributes are inherited downward.** THD, BU, Job Family, Job Level and approval date are denormalised onto applications, stage events and hires. This gives one clean star with single-direction filters instead of snowflaked fact chains.
 3. **TOAD is source data.** `target_offer_acceptance_date` is passed through unchanged; `days_to_toad` and `risk_band_code` are computed from it and the configured as-of date, and only for open requisitions.
 4. **`requested_positions = filled_positions + openings_position`** is a hard test for every non-cancelled requisition. Withdrawn seats go to `cancelled_positions` (audit only) so the identity holds and cancelled demand never enters KPIs.
-5. **Offer data is integrated into `fct_application`.** The page needs accepted/declined/rescinded/reneged/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual.
+5. **Offer data is integrated into `fct_application`, on a one-acceptance-per-application assumption.** The page needs accepted/declined/rescinded/reneged/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual. This holds only because one application yields at most one governed accepted-offer event, so the offer columns describe a single event rather than a repeated group. Offer versions before final acceptance are resolved upstream. The moment multiple acceptance or re-offer cycles per application are required, that trade-off flips: build a separate offer-event fact rather than adding more offer columns here.
 6. **Three pipeline populations stay separate.** Active snapshot (`fct_application.is_active_pipeline`), completed historical conversion (`fct_application_stage_event.is_completed`, `advanced_to_next_stage`) and completed durations (`days_in_stage`). Rows with a null exit date are excluded from conversion, so candidates still in process are never failed conversions. Active age is a separate column from completed duration.
 7. **Stage flow and SLA are governed in `dim_recruiting_stage` seed rows.** Transformation code reads the dimension rather than hard-coding stage names.
 8. **Forecast is trained and capped upstream.** `mart_stage_yield` uses only applications with a final outcome on or before the as-of date (no future leakage), with fallback `bu_jf_jl → jf_jl → jf → all` when a segment has fewer than `forecast_min_segment_observations`. Yield is applied per active candidate, summed per requisition and capped at `openings_position` on `fct_requisition`. Power BI only sums the capped value.

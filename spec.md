@@ -191,6 +191,22 @@ The model must therefore keep these separate, as distinct columns:
 No metric may be defined from an application status value. Statuses change; dated events do
 not. In particular, `is_offer_accepted` must not be derived from `application_status = hired`.
 
+**Scope limit — one acceptance per application.** One application contributes at most one
+governed accepted-offer event. One accepted offer equals one seat, and every offer-based
+figure in this specification is a count of applications, which is what keeps accepted offer
+events, filled positions, and started positions reconcilable at requisition grain.
+
+Multiple offer versions before final acceptance — a revised salary, a moved start date, a
+re-issued offer letter — are offer *versions*, not separate acceptance events, and must be
+resolved upstream to the single governed acceptance date.
+
+A genuine re-offer cycle, where the same candidate accepts, is lost to a rescind or renege,
+and is later re-offered and accepts again for the same requisition, is out of scope for the
+current design; the source is expected to produce a new application for the second attempt.
+If multiple acceptance or re-offer cycles per application become a requirement, a separate
+offer-event fact must be introduced rather than adding further offer columns to the
+application fact.
+
 ### 5.5 Open position
 
 Open positions are represented by `openings_position` in the requisition data.
@@ -602,7 +618,7 @@ Business Unit + Job Family + Job Level + Current Stage
 
 If a segment does not have enough historical observations to produce a stable rate, the model should use a documented fallback hierarchy to a broader segment rather than return an unstable or misleading conversion probability.
 
-### 7.3 Stage-to-acceptance yield
+### 7.3 Stage-to-active-fill yield
 
 For each active pipeline candidate, estimate the probability of eventually reaching an
 **active fill** — an accepted offer that is not subsequently rescinded or reneged — from the
@@ -614,7 +630,7 @@ Rate stays comparable with Fill Rate. An offer accepted and then lost trains as 
 here, even though it remains a successful historical offer-stage conversion in EXEC-11.
 
 ```text
-Expected Pipeline Fills = SUM(active candidate stage-to-acceptance probability)
+Expected Pipeline Fills = SUM(active candidate stage-to-active-fill probability)
 ```
 
 Expected fills must then be capped at the number of remaining open positions on the requisition.
@@ -768,6 +784,9 @@ The application fact must keep current state and historical events in separate c
 status value `hired` must not be used, because it conflates the Talent Acquisition fill
 event with the actual employee start; use `offer_accepted` and `started` instead.
 
+The application fact assumes at most one governed accepted-offer event per application; see
+section 9.4.
+
 ### 9.4 Offer data
 
 Offer information may be stored in a separate fact or integrated into the application fact,
@@ -789,6 +808,21 @@ An **active fill** is then an accepted offer with no subsequent rescind or reneg
 offer events are required for Time to Fill and offer-stage conversion; active fills are
 required for positions filled, Fill Rate and forecast training labels; actual starts are
 required for hiring-quality analysis.
+
+**Cardinality assumption.** The columns above describe a single acceptance event, so one
+application must contribute at most one governed accepted-offer event. Where the source
+holds several offer versions for one application before final acceptance, the transformation
+must resolve them to one acceptance — normally the earliest acceptance date of the offer the
+candidate actually accepted — and the resolution rule must be documented where it is applied.
+A source application carrying more than one accepted offer version must be resolved or
+rejected, never loaded as-is.
+
+If future requirements need multiple acceptance or re-offer cycles for a single application,
+introduce a **separate offer-event fact** — one row per offer event, with an offer sequence
+number and its own accepted, rescinded and reneged dates — and keep the application fact at
+one row per application holding the resolved current state. Do not overload the application
+fact with a second set of offer columns or a repeated group; that would break the application
+grain and every count-based reconciliation in section 12.
 
 ### 9.5 Hire and termination data
 
@@ -885,7 +919,7 @@ Suggested measures:
 
 - active_candidates
 - historical_stage_conversion
-- stage_to_acceptance_yield
+- stage_to_active_fill_yield
 - median_completed_days_in_stage
 - median_active_stage_age
 
@@ -1000,6 +1034,7 @@ requested_positions = filled_positions + openings_position
 6. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
 7. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
 8. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
+9. One application must carry at most one governed accepted-offer event. Multiple source offer versions before final acceptance must be resolved upstream to a single acceptance date; an application arriving with more than one accepted offer version must be resolved or rejected, not loaded as-is.
 
 ### Pipeline rules
 
@@ -1106,23 +1141,24 @@ The Executive Summary data project is complete when all of the following are tru
 5. Fill Rate reconciles from requested, filled, and open position quantities, where filled means active fills.
 6. Offer acceptance, active fill, and hire are modelled as three separate concepts; no metric is defined from an application status value.
 7. `offer_accepted_date` is preserved after an employer rescind or a candidate renege, and a seat lost after acceptance is restated as open.
-8. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
-9. Open-position risk is based on source TOAD and the configured as-of date.
-10. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.
-11. At-Risk Open Positions counts open seats, not merely requisitions.
-12. Hiring constraints are treated as requisition-level attributes.
-13. Funnel metrics distinguish active pipeline from completed historical conversion, and an accepted offer remains a successful offer-stage conversion even if it is later lost before the start.
-14. Forecast Fill Rate uses active pipeline stage-to-acceptance yield segmented by Business Unit, Job Family, and Job Level where data supports it.
-15. Forecast expected fills are capped by remaining open positions.
-16. No future actual recruiting outcomes leak into historical metrics or forecast training data.
-17. 60-Day Early Attrition is included as the Executive Summary quality KPI and counts only candidates who actually started employment.
-18. The 60-Day Early Attrition KPI uses a rolling 12-month window of fully matured start cohorts.
-19. Immature hires and incomplete start months do not enter the quality denominator or trend.
-20. The speed-versus-quality visual compares median Time to Fill and 60-Day Early Attrition for the same monthly matured hire cohorts.
-21. The speed-versus-quality visual is treated as diagnostic association, not evidence of causation.
-22. Required dimensions, facts, marts, documentation, and schema definitions are produced.
-23. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
-24. Standalone Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
+8. One application contributes at most one governed accepted-offer event, multiple offer versions are resolved upstream, and the limitation plus its remedy (a separate offer-event fact) are documented.
+9. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
+10. Open-position risk is based on source TOAD and the configured as-of date.
+11. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.
+12. At-Risk Open Positions counts open seats, not merely requisitions.
+13. Hiring constraints are treated as requisition-level attributes.
+14. Funnel metrics distinguish active pipeline from completed historical conversion, and an accepted offer remains a successful offer-stage conversion even if it is later lost before the start.
+15. Forecast Fill Rate uses active pipeline stage-to-active-fill yield segmented by Business Unit, Job Family, and Job Level where data supports it.
+16. Forecast expected fills are capped by remaining open positions.
+17. No future actual recruiting outcomes leak into historical metrics or forecast training data.
+18. 60-Day Early Attrition is included as the Executive Summary quality KPI and counts only candidates who actually started employment.
+19. The 60-Day Early Attrition KPI uses a rolling 12-month window of fully matured start cohorts.
+20. Immature hires and incomplete start months do not enter the quality denominator or trend.
+21. The speed-versus-quality visual compares median Time to Fill and 60-Day Early Attrition for the same monthly matured hire cohorts.
+22. The speed-versus-quality visual is treated as diagnostic association, not evidence of causation.
+23. Required dimensions, facts, marts, documentation, and schema definitions are produced.
+24. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
+25. Standalone Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
 
 ---
 

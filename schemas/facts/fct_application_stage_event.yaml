@@ -5,7 +5,7 @@ purpose: >
   Stage-movement fact: one row each time an application enters a recruiting
   stage. It is the source of historical stage-to-stage conversion, completed
   days in stage (median), active stage age, and the stage-entry populations used
-  to train stage-to-acceptance yield. Completed intervals and open intervals are
+  to train stage-to-active-fill yield. Completed intervals and open intervals are
   explicitly separated so in-process candidates are never counted as failures.
   This fact is purely historical: a stage exit that happened is never rewritten by
   something that happened later. In particular, the offer stage is exited

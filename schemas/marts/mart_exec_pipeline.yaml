@@ -90,7 +90,7 @@ business_rules:
   - Offer-stage conversion is historical and immutable. It counts accepted-offer events, so it will normally sit above the current fill picture in mart_exec_demand; the difference is mart_exec_demand.lost_after_acceptance_positions, not an error.
   - Candidates still in a stage are excluded from stage_completed_count, so they are never counted as failed conversions.
   - Active applications can only sit on open requisitions.
-  - Stage-to-acceptance yield is not in this mart; it lives in mart_stage_yield and is applied to fct_application.
+  - Stage-to-active-fill yield is not in this mart; it lives in mart_stage_yield and is applied to fct_application.
 
 data_quality_tests:
   - {test: unique, columns: [thd_month_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key]}

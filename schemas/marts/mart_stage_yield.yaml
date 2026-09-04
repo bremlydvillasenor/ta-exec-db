@@ -89,7 +89,7 @@ business_rules:
   - The training LABEL is is_active_fill. An accepted offer later rescinded or reneged trains as a failure because the forecast predicts seats that will actually be filled, and it is added to filled_positions, which is itself an active-fill count.
   - The label is deliberately not is_offer_accepted_event (that would over-predict current fill) and not is_started (that would treat every accepted offer awaiting a start date as a failure and add HR start lag to a TA delivery forecast).
   - reached_active_fill_count <= reached_acceptance_event_count. The difference is post-acceptance loss and is expected to be small; a large or growing gap is a signal worth reporting, not a data error.
-  - An application counts once per stage even if it re-entered the stage.
+  - An application counts once per stage even if it re-entered the stage, and contributes at most one acceptance outcome, because fct_application allows at most one governed accepted-offer event per application. Numerator and denominator are therefore both application counts and the yield stays a genuine probability.
   - Yield is monotone in practice (later stages have higher yield) but this is not enforced; it is reported as a warning test.
   - The fallback hierarchy is deterministic and documented here; changing it is a contract change.
   - Every active application in fct_application must find exactly one row here for its segment + current stage.
@@ -104,7 +104,7 @@ data_quality_tests:
   - {test: expression, expression: "applied_observations >= forecast_min_segment_observations OR yield_segment_level = 'all'"}
   - {test: expression, expression: "applied_yield for offer stage >= applied_yield for interview stage within the same segment", severity: warn}
   - {test: reconciliation, expression: "every (segment, current stage) of active fct_application rows exists here", severity: error}
-  - {test: reconciliation, expression: "fct_application.stage_to_acceptance_yield = applied_yield for the matching row"}
+  - {test: reconciliation, expression: "fct_application.stage_to_active_fill_yield = applied_yield for the matching row"}
   - {test: reconciliation, expression: "SUM(reached_active_fill_count) at the offer stage = COUNT(fct_application WHERE has_final_outcome AND is_active_fill)"}
   - {test: reconciliation, expression: "SUM(reached_acceptance_event_count) at the offer stage = COUNT(fct_application WHERE has_final_outcome AND is_offer_accepted_event)"}
 
@@ -113,6 +113,7 @@ power_bi:
   notes: >
     Not needed by any Executive Summary visual; load only for tooltips or audit.
     Yields are already applied to fct_application and capped on fct_requisition.
-    The column is still named stage_to_acceptance_yield on fct_application for
-    continuity, but from v1.1 it predicts an ACTIVE FILL. Document this wherever the
-    forecast is explained so nobody reads it as a raw offer-acceptance probability.
+    In v1.1 the metric and the applied column were renamed from "stage-to-acceptance"
+    to stage_to_active_fill_yield, because the prediction target is an active fill, not
+    a raw offer-acceptance probability. Anything still carrying the old name is reading
+    an out-of-date contract.
