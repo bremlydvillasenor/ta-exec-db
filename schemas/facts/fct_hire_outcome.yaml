@@ -1,0 +1,147 @@
+dataset: fct_hire_outcome
+layer: fact
+version: 1.0
+purpose: >
+  Hire-grain fact for hiring quality. One row per person who actually started
+  employment on or before the as-of date, with the start cohort, 60-day maturity,
+  early-attrition flag and the Time to Fill of the same hire. It is the governed
+  source of 60-Day Early Attrition (EXEC-13) and Speed vs 60-Day Early Attrition
+  (EXEC-14), which use employee start month, not THD, as their date basis.
+
+grain: One row per started hire (one accepted offer that resulted in an employee start).
+
+primary_key: [hire_key]
+unique_keys:
+  - [application_key]
+  - [worker_id, employee_start_date]
+
+source: >
+  HR system worker/hire and termination events joined to the accepted-offer
+  application. Multiple worker-event or termination rows per hire are resolved to
+  one row (earliest termination after start) before this fact is built. Only starts
+  on or before as_of_date are included.
+
+columns:
+  - name: hire_key
+    type: integer
+    nullable: false
+  - name: application_key
+    type: integer
+    nullable: false
+    description: The accepted-offer application this hire came from.
+  - name: candidate_id
+    type: string
+    nullable: false
+  - name: worker_id
+    type: string
+    nullable: true
+    description: HR worker identifier where available.
+  - name: requisition_key
+    type: integer
+    nullable: false
+  - name: business_unit_key
+    type: integer
+    nullable: false
+    description: Inherited from the requisition (conformed key for BU slicer).
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: cohort_month_key
+    type: integer
+    nullable: false
+    description: yyyymm of employee_start_date. Active relationship to dim_start_cohort.
+  - name: employee_start_date_key
+    type: integer
+    nullable: false
+    description: date_key of employee_start_date. Optional inactive relationship to dim_date only.
+  - name: requisition_approval_date
+    type: date
+    nullable: false
+  - name: offer_accepted_date
+    type: date
+    nullable: false
+  - name: employee_start_date
+    type: date
+    nullable: false
+    description: Actual first day of employment. Start of the 60-day observation window.
+  - name: termination_date
+    type: date
+    nullable: true
+    description: Termination date on or before as_of_date. Null when still employed as of the as-of date.
+  - name: tenure_days_at_termination
+    type: integer
+    nullable: true
+    description: termination_date - employee_start_date. Null when not terminated.
+  - name: days_observed
+    type: integer
+    nullable: false
+    description: as_of_date - employee_start_date. How much of the window has been observed.
+  - name: is_60_day_matured
+    type: boolean
+    nullable: false
+    description: days_observed >= 60. The hire's own observation window is complete.
+  - name: is_fully_matured_start_month
+    type: boolean
+    nullable: false
+    description: Denormalised from dim_start_cohort. Only hires with this flag enter the KPI denominator.
+  - name: is_60_day_early_attrition
+    type: boolean
+    nullable: false
+    description: termination_date IS NOT NULL AND 0 <= tenure_days_at_termination <= 60. Always false when not terminated.
+  - name: time_to_fill_days
+    type: integer
+    nullable: false
+    description: offer_accepted_date - requisition_approval_date for this hire. Source of Median Time to Fill by start cohort (EXEC-14).
+
+relationships:
+  - {to: dim_start_cohort, columns: {cohort_month_key: cohort_month_key}, cardinality: many_to_one, active: true, role: employee_start_cohort}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_date, columns: {employee_start_date_key: date_key}, cardinality: many_to_one, active: false, notes: Keep inactive (or omit) so the THD slicer never filters hires.}
+  - {to: fct_application, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only.}
+
+business_rules:
+  - A hire appears exactly once. Duplicate start or termination source rows must be resolved upstream.
+  - The 60-day window begins at employee_start_date, so start month is the cohort basis; THD and offer month are not.
+  - Hires whose start month is not fully matured are kept in the table (for reconciliation) but excluded from the KPI and trend through is_fully_matured_start_month.
+  - is_60_day_early_attrition is true only for terminations from day 0 through day 60 inclusive.
+  - Hires that accepted an offer but have not started by the as-of date are not in this table.
+  - Only started hires can appear, so every row has is_offer_accepted = true on its application.
+
+data_quality_tests:
+  - {test: unique, columns: [hire_key]}
+  - {test: unique, columns: [application_key]}
+  - {test: not_null, columns: [hire_key, application_key, requisition_key, business_unit_key, job_family_key, job_level_key, cohort_month_key, employee_start_date, offer_accepted_date, requisition_approval_date, time_to_fill_days]}
+  - {test: expression, expression: "employee_start_date <= as_of_date"}
+  - {test: expression, expression: "termination_date IS NULL OR (termination_date >= employee_start_date AND termination_date <= as_of_date)"}
+  - {test: expression, expression: "employee_start_date >= offer_accepted_date >= requisition_approval_date"}
+  - {test: expression, expression: "time_to_fill_days = DATEDIFF(requisition_approval_date, offer_accepted_date) AND time_to_fill_days >= 0"}
+  - {test: expression, expression: "tenure_days_at_termination = DATEDIFF(employee_start_date, termination_date)", filter: termination_date IS NOT NULL}
+  - {test: expression, expression: "is_60_day_matured = (days_observed >= attrition_window_days)"}
+  - {test: expression, expression: "is_60_day_early_attrition = (termination_date IS NOT NULL AND tenure_days_at_termination BETWEEN 0 AND attrition_window_days)"}
+  - {test: expression, expression: "is_fully_matured_start_month implies is_60_day_matured"}
+  - {test: expression, expression: "cohort_month_key = yyyymm(employee_start_date)"}
+  - {test: reconciliation, expression: "is_fully_matured_start_month equals dim_start_cohort.is_fully_matured_start_month for cohort_month_key"}
+  - {test: reconciliation, expression: "application exists in fct_application with is_offer_accepted = true and matching offer_accepted_date and segment keys"}
+  - {test: referential_integrity, description: All dimension keys and application_key exist.}
+
+power_bi:
+  hide_columns: [hire_key, application_key, requisition_key, business_unit_key, job_family_key, job_level_key, cohort_month_key, employee_start_date_key]
+  summarization_off: [time_to_fill_days, tenure_days_at_termination, days_observed]
+  measures:
+    - name: Matured Hires 60d
+      dax: CALCULATE(COUNTROWS(fct_hire_outcome), fct_hire_outcome[is_fully_matured_start_month] = TRUE)
+    - name: Early Exits 60d
+      dax: CALCULATE(COUNTROWS(fct_hire_outcome), fct_hire_outcome[is_fully_matured_start_month] = TRUE, fct_hire_outcome[is_60_day_early_attrition] = TRUE)
+    - name: 60-Day Early Attrition (KPI)
+      dax: CALCULATE(DIVIDE([Early Exits 60d], [Matured Hires 60d]), dim_start_cohort[kpi_cohort_window] = "latest_12")
+    - name: Median Time to Fill (Start Cohort)
+      dax: CALCULATE(MEDIAN(fct_hire_outcome[time_to_fill_days]), fct_hire_outcome[is_fully_matured_start_month] = TRUE)
+  notes: >
+    No active relationship to dim_date, so the THD slicer cannot shorten the observation
+    window. BU/JF/JL slicers still apply. Quality measures are weighted (SUM/SUM), never
+    an average of monthly rates.

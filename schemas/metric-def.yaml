@@ -1,0 +1,561 @@
+# Governed metric definitions for the TA Executive Summary.
+# Every KPI card, chart series and supporting label on wireframe.html maps to one metric here.
+# IDs EXEC-01..EXEC-14 follow spec.md section 6; FCST-* cover section 7; SUPP-* are
+# supporting context values shown on the page (footers, tooltips, comparison values).
+
+contract:
+  name: ta_exec_summary_metrics
+  version: 1.0
+  as_of_date: 2026-05-31          # from ref_reporting_config; never the system date
+  conventions:
+    - Rates are stored and computed as decimals 0-1; percentage formatting belongs to Power BI.
+    - Every rate is computed as SUM(numerator) / SUM(denominator) in the current filter context, never as an average of rates.
+    - Medians are computed in Power BI with MEDIAN() over the governed fact; mart medians are row-grain reference values only.
+    - Delivery metrics filter on Target Hire Date (dim_date); quality metrics filter on employee start cohort (dim_start_cohort) and ignore the THD slicer.
+    - Business Unit, Job Family and Job Level slicers apply to every metric.
+
+metrics:
+
+  # ---------------------------------------------------------------- Delivery
+  - metric_id: EXEC-01
+    name: Fill Rate
+    business_question: Of the positions the business expects to fill in the selected demand period, how many have been filled?
+    description: Position-based demand attainment. Not the share of requisitions closed.
+    formula: Positions Filled / Requested Positions
+    numerator: SUM(filled_positions)
+    denominator: SUM(requested_positions)
+    aggregation: ratio_of_sums
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions, cancelled positions, offers extended but not accepted]
+    target: ref_reporting_config.fill_rate_target (0.90)
+    format: percent, 1 decimal
+    source_dataset: mart_exec_demand (governed source fct_requisition)
+    required_columns: [filled_positions, requested_positions, thd_month_key, business_unit_key, job_family_key, job_level_key]
+    power_bi_measure_guidance: |
+      Fill Rate = DIVIDE([Positions Filled], [Requested Positions])
+      Fill Rate Target = MAX(ref_reporting_config[fill_rate_target])
+      Fill Rate vs Target = [Fill Rate] - [Fill Rate Target]
+      Card status: "Below target" when [Fill Rate] < [Fill Rate Target].
+    validation_rules:
+      - Result is identical when computed from fct_requisition and from mart_exec_demand for any slicer combination.
+      - 0 <= value <= 1.
+      - Requested Positions = Positions Filled + Open Positions in the same context.
+    notes: Card footer shows Demand, Filled and Open (EXEC-03, EXEC-02, EXEC-04).
+
+  - metric_id: EXEC-02
+    name: Positions Filled
+    business_question: How many required positions has TA successfully filled?
+    description: Seats with an accepted offer on or before the as-of date.
+    formula: SUM(filled_positions)
+    numerator: SUM(filled_positions)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions, offers extended but not accepted, accepted offers after the as-of date (cannot exist)]
+    target: null
+    format: integer
+    source_dataset: mart_exec_demand (governed source fct_requisition)
+    required_columns: [filled_positions]
+    power_bi_measure_guidance: |
+      Positions Filled = SUM(mart_exec_demand[filled_positions])
+    validation_rules:
+      - Equals COUNT of fct_application rows with is_offer_accepted = true on the same requisitions.
+      - Never exceeds Requested Positions.
+    notes: null
+
+  - metric_id: EXEC-03
+    name: Requested Positions (Demand)
+    business_question: How many positions does the business expect TA to fill in the selected period?
+    description: Net active demand in seats.
+    formula: SUM(requested_positions)
+    numerator: SUM(requested_positions)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions, cancelled positions]
+    target: null
+    format: integer
+    source_dataset: mart_exec_demand (governed source fct_requisition)
+    required_columns: [requested_positions]
+    power_bi_measure_guidance: |
+      Requested Positions = SUM(mart_exec_demand[requested_positions])
+    validation_rules:
+      - Requested Positions = Positions Filled + Open Positions in every context.
+    notes: Future THD months (through 2027-05-31) are valid demand and must be preserved.
+
+  - metric_id: EXEC-04
+    name: Total Open Positions
+    business_question: How many positions remain unfilled?
+    description: Sum of source openings_position on open, non-cancelled requisitions.
+    formula: SUM(openings_position)
+    numerator: SUM(openings_position)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD)
+    population: Open requisitions (is_open = true) with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions, filled requisitions]
+    target: null
+    format: integer
+    source_dataset: mart_exec_demand.open_positions and mart_exec_risk.openings_position (governed source fct_requisition)
+    required_columns: [open_positions, openings_position]
+    power_bi_measure_guidance: |
+      Open Positions = SUM(mart_exec_demand[open_positions])
+      Open Positions (Risk) = SUM(mart_exec_risk[openings_position])
+      Both must return the same value in the same context.
+    validation_rules:
+      - openings_position is requisition-level and never multiplied by candidate rows.
+      - Risk band totals and constraint mix both sum to this value.
+    notes: null
+
+  - metric_id: EXEC-05
+    name: Median Time to Fill
+    business_question: How long does it typically take TA to secure an accepted offer?
+    description: Median days from requisition approval to offer acceptance, accepted offers only.
+    formula: MEDIAN(offer_accepted_date - requisition_approval_date)
+    numerator: null
+    denominator: null
+    aggregation: median
+    date_basis: target_hire_date (THD) of the associated requisition; re-cohorted by employee start month in EXEC-14
+    population: Accepted offers on or before the as-of date, on non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [declined, rescinded and withdrawn offers, active candidates]
+    target: null
+    format: integer days
+    source_dataset: fct_application.time_to_fill_days
+    required_columns: [time_to_fill_days, is_offer_accepted, thd_date_key, business_unit_key, job_family_key, job_level_key]
+    power_bi_measure_guidance: |
+      Median Time to Fill = MEDIAN(fct_application[time_to_fill_days])
+      time_to_fill_days is blank on non-accepted rows, so MEDIAN ignores them.
+      Do not average mart_exec_demand[median_time_to_fill_days].
+    validation_rules:
+      - time_to_fill_days >= 0 for every accepted offer.
+      - Unfiltered value equals the row-grain median in mart_exec_demand when the mart is at total grain.
+    notes: Median chosen over mean because cycle times have long-tail outliers.
+
+  # ---------------------------------------------------------------- Risk
+  - metric_id: EXEC-06
+    name: Days to TOAD
+    business_question: How many days remain before an open requisition must have an accepted offer?
+    description: Source Target Offer Acceptance Date minus the fixed as-of date. Negative when missed.
+    formula: target_offer_acceptance_date - as_of_date
+    numerator: null
+    denominator: null
+    aggregation: row_level (no aggregation)
+    date_basis: as_of_date (2026-05-31)
+    population: Open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [closed, filled and cancelled requisitions]
+    target: null
+    format: integer days
+    source_dataset: mart_exec_risk.days_to_toad (governed source fct_requisition)
+    required_columns: [target_offer_acceptance_date, days_to_toad]
+    power_bi_measure_guidance: Use the stored column; never recompute TOAD from THD in DAX.
+    validation_rules:
+      - TOAD is the source value; the pipeline may validate it but never overwrites it.
+      - days_to_toad is null for non-open requisitions.
+    notes: Pipeline strength does not change this value or its band.
+
+  - metric_id: EXEC-07
+    name: Open Positions by Risk Band
+    business_question: How much open demand sits in each TOAD risk band?
+    description: SUM(openings_position) per band from ref_risk_band.
+    formula: SUM(openings_position) grouped by risk_band
+    numerator: SUM(openings_position)
+    denominator: null
+    aggregation: sum
+    date_basis: as_of_date for the band; THD for period selection
+    population: Open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [non-open requisitions]
+    target: null
+    format: integer (bars), with band share as tooltip
+    source_dataset: mart_exec_risk + ref_risk_band
+    required_columns: [openings_position, risk_band_code]
+    power_bi_measure_guidance: |
+      Open Positions (Risk) = SUM(mart_exec_risk[openings_position])
+      Axis = ref_risk_band[risk_band_name] sorted by sort_order (Missed, High Risk, Medium Risk, On Track).
+    validation_rules:
+      - Missed = days_to_toad < 0; High = 0-7; Medium = 8-14; On Track >= 15.
+      - Sum over bands equals Total Open Positions in the same context.
+      - A requisition with 8 open seats and days_to_toad = 5 contributes 8 to High Risk, not 1.
+    notes: Requisition counts per band may be shown as supporting context only.
+
+  - metric_id: EXEC-08
+    name: At-Risk Open Positions
+    business_question: How many open positions need immediate attention because their TOAD is near or missed?
+    description: Missed + High Risk + Medium Risk open positions, i.e. days_to_toad <= 14.
+    formula: SUM(openings_position) where is_at_risk
+    numerator: SUM(at_risk_open_positions)
+    denominator: null
+    aggregation: sum
+    date_basis: as_of_date for the band; THD for period selection
+    population: Open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [On Track requisitions, non-open requisitions]
+    target: null
+    format: integer; card shows "of N open"
+    source_dataset: mart_exec_risk
+    required_columns: [at_risk_open_positions, openings_position, is_at_risk]
+    power_bi_measure_guidance: |
+      At-Risk Open Positions = SUM(mart_exec_risk[at_risk_open_positions])
+      Equivalent: CALCULATE([Open Positions (Risk)], mart_exec_risk[is_at_risk] = TRUE)
+    validation_rules:
+      - Equals Missed + High Risk + Medium Risk from EXEC-07.
+      - <= Total Open Positions.
+    notes: The page still shows the three bands separately so overdue and approaching risk are distinguishable.
+
+  - metric_id: SUPP-01
+    name: At-Risk Share of Open Positions
+    business_question: What proportion of open demand is at risk?
+    description: Supporting delta on the At-Risk card ("35.3% of open positions").
+    formula: At-Risk Open Positions / Total Open Positions
+    numerator: SUM(at_risk_open_positions)
+    denominator: SUM(openings_position)
+    aggregation: ratio_of_sums
+    date_basis: as of as_of_date; THD for period selection
+    population: Open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [non-open requisitions]
+    target: null
+    format: percent, 1 decimal
+    source_dataset: mart_exec_risk
+    required_columns: [at_risk_open_positions, openings_position]
+    power_bi_measure_guidance: At-Risk Share of Open = DIVIDE([At-Risk Open Positions], [Open Positions (Risk)])
+    validation_rules: [0 <= value <= 1]
+    notes: null
+
+  - metric_id: EXEC-09
+    name: Open Positions by Primary Hiring Constraint
+    business_question: What is preventing the current open demand from being filled?
+    description: Open positions distributed by the requisition's current primary hiring constraint.
+    formula: SUM(openings_position) grouped by hiring_constraint
+    numerator: SUM(openings_position)
+    denominator: null
+    aggregation: sum
+    date_basis: as of as_of_date; THD for period selection
+    population: Open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [non-open requisitions]
+    target: null
+    format: integer (bars sorted descending)
+    source_dataset: mart_exec_risk + dim_hiring_constraint
+    required_columns: [openings_position, hiring_constraint_key]
+    power_bi_measure_guidance: |
+      Value = [Open Positions (Risk)]; axis = dim_hiring_constraint[hiring_constraint_short_name].
+    validation_rules:
+      - Each requisition has exactly one constraint, so the mix sums to Total Open Positions.
+      - Weight is open seats, never requisition count.
+    notes: Constraint is requisition-level; every open seat inherits it.
+
+  # ---------------------------------------------------------------- Pipeline
+  - metric_id: EXEC-10
+    name: Active Pipeline Volume by Stage
+    business_question: Where are active candidates currently concentrated in the recruiting process?
+    description: Snapshot count of active applications by current stage, on open requisitions, as of the as-of date.
+    formula: COUNT(applications where is_active_pipeline) grouped by current stage
+    numerator: SUM(active_applications)
+    denominator: null
+    aggregation: sum
+    date_basis: as_of_date snapshot; THD of the requisition for period selection
+    population: Active applications on open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level, recruiting_stage]
+    exclusions: [hired, rejected, withdrawn, declined and rescinded applications; applications on closed or cancelled requisitions]
+    target: null
+    format: integer with data bar
+    source_dataset: mart_exec_pipeline (governed source fct_application)
+    required_columns: [active_applications, recruiting_stage_key]
+    power_bi_measure_guidance: Active Now = SUM(mart_exec_pipeline[active_applications])
+    validation_rules:
+      - Equals COUNT of fct_application rows with is_active_pipeline = true.
+      - Equals SUM(fct_requisition.active_pipeline_applications).
+    notes: Active volume is a snapshot population; never divide one stage's active count by another's to get conversion.
+
+  - metric_id: EXEC-11
+    name: Historical Stage-to-Stage Conversion
+    business_question: At which recruiting stages are candidates most likely to fall out?
+    description: Share of completed stage exits that advanced to the next stage (or accepted the offer for the Offer stage).
+    formula: Candidates advancing to next stage / Candidates completing the stage
+    numerator: SUM(stage_advanced_count)
+    denominator: SUM(stage_completed_count)
+    aggregation: ratio_of_sums
+    date_basis: stage exit on or before as_of_date; THD of the requisition for period selection
+    population: Completed stage-event rows (stage_exit_date not null).
+    filters: [thd_period, business_unit, job_family, job_level, recruiting_stage]
+    exclusions: [stage-event rows still open (candidate still in the stage)]
+    target: null
+    format: percent, 0 decimals
+    source_dataset: mart_exec_pipeline (governed source fct_application_stage_event)
+    required_columns: [stage_advanced_count, stage_completed_count, recruiting_stage_key]
+    power_bi_measure_guidance: |
+      Historical Conversion = DIVIDE(SUM(mart_exec_pipeline[stage_advanced_count]), SUM(mart_exec_pipeline[stage_completed_count]))
+      Highlight the minimum stage as the "Watch" call-out.
+    validation_rules:
+      - Candidates still in process are in neither numerator nor denominator.
+      - 0 <= value <= 1.
+      - Offer-stage conversion equals accepted offers / completed offer exits.
+    notes: Stage flow (next stage) is governed in dim_recruiting_stage seed rows.
+
+  - metric_id: EXEC-12
+    name: Median Completed Days in Stage
+    business_question: Where is the recruiting process slowing down?
+    description: Median of stage_exit_date - stage_entry_date for completed stage intervals, compared with the stage SLA.
+    formula: MEDIAN(days_in_stage) for completed rows
+    numerator: null
+    denominator: null
+    aggregation: median
+    date_basis: stage exit on or before as_of_date; THD of the requisition for period selection
+    population: Completed stage-event rows.
+    filters: [thd_period, business_unit, job_family, job_level, recruiting_stage]
+    exclusions: [open stage intervals (active candidates)]
+    target: dim_recruiting_stage.sla_days per stage
+    format: decimal days, 1 decimal
+    source_dataset: fct_application_stage_event.days_in_stage (reference value in mart_exec_pipeline)
+    required_columns: [days_in_stage, is_completed, recruiting_stage_key, sla_days]
+    power_bi_measure_guidance: |
+      Median Completed Days = MEDIAN(fct_application_stage_event[days_in_stage])
+      Stage SLA Days = MAX(dim_recruiting_stage[sla_days])
+      Over SLA = [Median Completed Days] > [Stage SLA Days]
+    validation_rules:
+      - days_in_stage >= 0 and null for open rows.
+      - Completed duration is never mixed with active stage age (SUPP-05).
+    notes: null
+
+  - metric_id: SUPP-05
+    name: Median Active Stage Age
+    business_question: How long have candidates currently in each stage been waiting?
+    description: Operational age of open stage intervals against the as-of date. Distinct from completed duration.
+    formula: MEDIAN(as_of_date - current_stage_entry_date) for active applications
+    numerator: null
+    denominator: null
+    aggregation: median
+    date_basis: as_of_date
+    population: Active applications on open requisitions.
+    filters: [thd_period, business_unit, job_family, job_level, recruiting_stage]
+    exclusions: [completed intervals]
+    target: null
+    format: decimal days, 1 decimal
+    source_dataset: fct_application.active_stage_age_days (reference value in mart_exec_pipeline)
+    required_columns: [active_stage_age_days, is_active_pipeline]
+    power_bi_measure_guidance: Median Active Stage Age = MEDIAN(fct_application[active_stage_age_days])
+    validation_rules: [Null for non-active applications.]
+    notes: Optional tooltip on the pipeline table; not a primary column in the wireframe.
+
+  # ---------------------------------------------------------------- Forecast
+  - metric_id: FCST-01
+    name: Stage-to-Acceptance Yield
+    business_question: Historically, what share of candidates who reached a given stage eventually accepted an offer?
+    description: Training probability per segment and stage, with documented fallback for small segments.
+    formula: reached_acceptance_count / entered_stage_count
+    numerator: applications with final outcome that entered the stage and were hired
+    denominator: applications with final outcome that entered the stage
+    aggregation: ratio_of_sums (trained once per segment + stage)
+    date_basis: outcomes on or before as_of_date only
+    population: Applications with has_final_outcome = true (not active).
+    filters: [business_unit, job_family, job_level, recruiting_stage]
+    exclusions: [active applications, any outcome after the as-of date]
+    target: null
+    format: percent, 1 decimal (audit only)
+    source_dataset: mart_stage_yield
+    required_columns: [entered_stage_count, reached_acceptance_count, applied_yield, yield_segment_level, applied_observations]
+    power_bi_measure_guidance: Not shown on the page. Optional tooltip = MAX(mart_stage_yield[applied_yield]).
+    validation_rules:
+      - 0 <= yield <= 1.
+      - Fallback order bu_jf_jl -> jf_jl -> jf -> all, using ref_reporting_config.forecast_min_segment_observations.
+      - Not filtered by THD.
+    notes: Deterministic and reproducible for the same as-of date.
+
+  - metric_id: FCST-02
+    name: Expected Pipeline Fills
+    business_question: How many more positions is the current active pipeline likely to fill?
+    description: Sum of stage-to-acceptance probabilities over active candidates, capped per requisition at remaining open positions.
+    formula: SUM over requisitions of LEAST(SUM(active candidate yield), openings_position)
+    numerator: SUM(expected_pipeline_fills)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD) of the requisition
+    population: Open requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [non-open requisitions]
+    target: null
+    format: decimal, 1 decimal
+    source_dataset: mart_exec_demand (governed source fct_requisition.expected_pipeline_fills)
+    required_columns: [expected_pipeline_fills]
+    power_bi_measure_guidance: Expected Pipeline Fills = SUM(mart_exec_demand[expected_pipeline_fills])
+    validation_rules:
+      - Per requisition <= openings_position (a 3-seat requisition contributes at most 3).
+      - Total <= Total Open Positions in the same context.
+    notes: The cap is applied upstream at requisition grain, so Power BI never needs candidate-level joins.
+
+  - metric_id: FCST-03
+    name: Forecast Filled Positions
+    business_question: How many positions are likely to be filled eventually?
+    description: Actual filled positions plus expected pipeline fills.
+    formula: Positions Filled + Expected Pipeline Fills
+    numerator: SUM(filled_positions) + SUM(expected_pipeline_fills)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions]
+    target: null
+    format: decimal, 1 decimal
+    source_dataset: mart_exec_demand
+    required_columns: [filled_positions, expected_pipeline_fills, forecast_filled_positions]
+    power_bi_measure_guidance: Forecast Filled Positions = [Positions Filled] + [Expected Pipeline Fills]
+    validation_rules: [Never exceeds Requested Positions.]
+    notes: null
+
+  - metric_id: FCST-04
+    name: Forecast Fill Rate
+    business_question: If historical conversion continues, how much of the demand will eventually be filled?
+    description: Planning indicator of eventual attainment, not on-time delivery.
+    formula: Forecast Filled Positions / Requested Positions
+    numerator: SUM(forecast_filled_positions)
+    denominator: SUM(requested_positions)
+    aggregation: ratio_of_sums
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions]
+    target: ref_reporting_config.fill_rate_target (shown as the same target line)
+    format: percent, 1 decimal
+    source_dataset: mart_exec_demand
+    required_columns: [forecast_filled_positions, requested_positions, thd_month_key]
+    power_bi_measure_guidance: |
+      Forecast Fill Rate = DIVIDE([Forecast Filled Positions], [Requested Positions])
+      Plot with [Fill Rate] by dim_date[month_label] (THD) as a dashed line; add [Fill Rate Target] as a constant line.
+    validation_rules:
+      - Forecast Fill Rate >= Fill Rate in every context.
+      - 0 <= value <= 1.
+      - Uses only outcomes known on or before the as-of date.
+    notes: A position may forecast as eventually filled even after missing its TOAD; risk measures timeliness, forecast measures eventual attainment.
+
+  # ---------------------------------------------------------------- Quality
+  - metric_id: EXEC-13
+    name: 60-Day Early Attrition
+    business_question: Of the hires with a complete 60-day observation window, what percentage left within their first 60 days?
+    description: Primary hiring-quality outcome metric. A cohort quality measure, not an enterprise turnover rate.
+    formula: Hires terminated within 60 days of start / Hires in fully matured 60-day start cohorts
+    numerator: SUM(early_attrition_60d_count)
+    denominator: SUM(matured_hires_60d)
+    aggregation: ratio_of_sums (weighted across cohorts)
+    date_basis: employee start cohort month (dim_start_cohort), not THD
+    population: Started hires in fully matured start months; KPI window = latest 12 fully matured cohorts (kpi_cohort_window = latest_12).
+    filters: [business_unit, job_family, job_level]
+    exclusions: [immature hires, incomplete start months, hires not yet started, THD slicer]
+    target: ref_reporting_config.early_attrition_60d_target
+    format: percent, 1 decimal
+    source_dataset: mart_exec_quality (governed source fct_hire_outcome)
+    required_columns: [early_attrition_60d_count, matured_hires_60d, cohort_month_key, kpi_cohort_window]
+    power_bi_measure_guidance: |
+      60-Day Early Attrition = DIVIDE(SUM(mart_exec_quality[early_attrition_60d_count]), SUM(mart_exec_quality[matured_hires_60d]))
+      60-Day Early Attrition (KPI) = CALCULATE([60-Day Early Attrition], dim_start_cohort[kpi_cohort_window] = "latest_12")
+      60-Day Early Attrition (Prior 12) = CALCULATE([60-Day Early Attrition], dim_start_cohort[kpi_cohort_window] = "prior_12")
+      Card footer: [Early Exits 60d] & " early exits ÷ " & [Matured Hires 60d] & " matured hires · latest fully matured cohort: " & [Latest Matured Cohort]
+    validation_rules:
+      - Termination qualifies only when 0 <= termination_date - employee_start_date <= 60.
+      - Denominator contains only fully matured start months (month end + 60 days <= as-of date).
+      - KPI aggregates exactly 12 matured cohorts, not 12 calendar months.
+      - Weighted result (87 / 1064 = 8.18% in the wireframe) is not the mean of monthly rates.
+      - 0 <= value <= 1.
+      - Not affected by the THD slicer.
+    notes: null
+
+  - metric_id: SUPP-02
+    name: Matured Hires 60d
+    business_question: How many hires support the quality KPI?
+    description: Denominator and cohort sample size (n under each chart point).
+    formula: COUNT(hires in fully matured start cohorts)
+    numerator: SUM(matured_hires_60d)
+    denominator: null
+    aggregation: sum
+    date_basis: employee start cohort month
+    population: Started hires in fully matured start months.
+    filters: [business_unit, job_family, job_level, kpi_cohort_window]
+    exclusions: [immature cohorts]
+    target: ref_reporting_config.min_cohort_size (low-volume threshold)
+    format: integer
+    source_dataset: mart_exec_quality
+    required_columns: [matured_hires_60d]
+    power_bi_measure_guidance: |
+      Matured Hires 60d = SUM(mart_exec_quality[matured_hires_60d])
+      Is Low Volume Cohort = [Matured Hires 60d] < MAX(ref_reporting_config[min_cohort_size])
+    validation_rules: [Equals COUNT(fct_hire_outcome WHERE is_fully_matured_start_month) in the same context.]
+    notes: Use for tooltips, the n labels, and low-volume flagging or suppression.
+
+  - metric_id: SUPP-03
+    name: Early Exits 60d
+    business_question: How many matured hires left within 60 days?
+    description: Numerator of EXEC-13.
+    formula: COUNT(matured hires with is_60_day_early_attrition)
+    numerator: SUM(early_attrition_60d_count)
+    denominator: null
+    aggregation: sum
+    date_basis: employee start cohort month
+    population: Started hires in fully matured start months.
+    filters: [business_unit, job_family, job_level, kpi_cohort_window]
+    exclusions: [immature cohorts, terminations after day 60]
+    target: null
+    format: integer
+    source_dataset: mart_exec_quality
+    required_columns: [early_attrition_60d_count]
+    power_bi_measure_guidance: Early Exits 60d = SUM(mart_exec_quality[early_attrition_60d_count])
+    validation_rules: [<= Matured Hires 60d.]
+    notes: null
+
+  - metric_id: SUPP-04
+    name: Latest Fully Matured Cohort
+    business_question: Which start month is the most recent one with a complete 60-day window?
+    description: Label shown on the quality card and used to anchor the rolling-12 window.
+    formula: MAX(cohort month) where cohort_month_end_date + 60 days <= as_of_date
+    numerator: null
+    denominator: null
+    aggregation: max
+    date_basis: employee start cohort month
+    population: dim_start_cohort rows.
+    filters: []
+    exclusions: []
+    target: null
+    format: text (e.g. "Mar 2026")
+    source_dataset: dim_start_cohort
+    required_columns: [cohort_month_label, is_latest_fully_matured_cohort]
+    power_bi_measure_guidance: Latest Matured Cohort = CALCULATE(MAX(dim_start_cohort[cohort_month_label]), dim_start_cohort[is_latest_fully_matured_cohort] = TRUE)
+    validation_rules: [Derived from the maturity rule, never hard-coded. Mar 2026 for as-of 2026-05-31.]
+    notes: null
+
+  - metric_id: EXEC-14
+    name: Speed vs 60-Day Early Attrition
+    business_question: When hiring becomes faster or slower, does early-tenure quality appear to move with it?
+    description: Dual-axis trend of median Time to Fill and 60-Day Early Attrition for the same fully matured monthly start cohorts.
+    formula: |
+      Per cohort month:
+        Speed   = MEDIAN(time_to_fill_days) over matured hires in the cohort
+        Quality = SUM(early_attrition_60d_count) / SUM(matured_hires_60d) for the same hires
+    numerator: see EXEC-13 for Quality
+    denominator: see EXEC-13 for Quality
+    aggregation: median (speed) and ratio_of_sums (quality), both by cohort month
+    date_basis: employee start cohort month
+    population: Fully matured start cohorts; window = latest 12 (kpi_cohort_window = latest_12).
+    filters: [business_unit, job_family, job_level]
+    exclusions: [immature cohorts, THD slicer, THD-based accepted offers that have not started]
+    target: null
+    format: left axis days (integer), right axis percent (1 decimal), n label per point
+    source_dataset: fct_hire_outcome (speed) and mart_exec_quality (quality), both via dim_start_cohort
+    required_columns: [time_to_fill_days, is_fully_matured_start_month, cohort_month_key, early_attrition_60d_count, matured_hires_60d]
+    power_bi_measure_guidance: |
+      Median Time to Fill (Start Cohort) = CALCULATE(MEDIAN(fct_hire_outcome[time_to_fill_days]), fct_hire_outcome[is_fully_matured_start_month] = TRUE)
+      Right axis = [60-Day Early Attrition]; x-axis = dim_start_cohort[cohort_month_label]; visual filter kpi_cohort_window = "latest_12".
+      Data label or tooltip = [Matured Hires 60d]; apply [Is Low Volume Cohort] for flagging.
+    validation_rules:
+      - Both lines use the same hires (fct_hire_outcome rows of the cohort).
+      - Exactly 12 points when the cohort filter is applied.
+      - The chart states association only; no causal wording.
+    notes: Median Time to Fill here is re-cohorted by start month and will differ from EXEC-05, which is THD-based.

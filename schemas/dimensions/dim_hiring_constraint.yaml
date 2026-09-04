@@ -1,0 +1,68 @@
+dataset: dim_hiring_constraint
+layer: dimension
+version: 1.0
+purpose: >
+  Governed list of primary hiring constraints recorded at requisition level.
+  Provides stable codes, executive display labels and sort order for the
+  "Open positions by primary constraint" visual.
+
+grain: One row per hiring constraint category.
+
+primary_key: [hiring_constraint_key]
+unique_keys:
+  - [hiring_constraint_code]
+
+source: Governed seed values in this contract, mapped from the requisition source field.
+
+columns:
+  - name: hiring_constraint_key
+    type: integer
+    nullable: false
+    description: Surrogate key.
+  - name: hiring_constraint_code
+    type: string
+    nullable: false
+    description: Stable code.
+  - name: hiring_constraint_name
+    type: string
+    nullable: false
+    description: Full business description.
+  - name: hiring_constraint_short_name
+    type: string
+    nullable: false
+    description: Short label used on the Executive Summary bars.
+  - name: is_material_constraint
+    type: boolean
+    nullable: false
+    description: false only for "No material constraint".
+  - name: sort_order
+    type: integer
+    nullable: false
+
+seed_rows:
+  - {hiring_constraint_key: 1, hiring_constraint_code: qualified_candidates,   hiring_constraint_name: Insufficient qualified candidates,        hiring_constraint_short_name: Qualified candidates,      is_material_constraint: true,  sort_order: 1}
+  - {hiring_constraint_key: 2, hiring_constraint_code: hiring_manager_delay,   hiring_constraint_name: Hiring manager delay,                     hiring_constraint_short_name: Hiring manager delay,      is_material_constraint: true,  sort_order: 2}
+  - {hiring_constraint_key: 3, hiring_constraint_code: compensation,           hiring_constraint_name: Compensation / offer competitiveness,     hiring_constraint_short_name: Compensation,              is_material_constraint: true,  sort_order: 3}
+  - {hiring_constraint_key: 4, hiring_constraint_code: interview_capacity,     hiring_constraint_name: Assessment or interview capacity,         hiring_constraint_short_name: Interview capacity,        is_material_constraint: true,  sort_order: 4}
+  - {hiring_constraint_key: 5, hiring_constraint_code: niche_skills,           hiring_constraint_name: Niche skill availability,                 hiring_constraint_short_name: Niche skills,              is_material_constraint: true,  sort_order: 5}
+  - {hiring_constraint_key: 6, hiring_constraint_code: candidate_availability, hiring_constraint_name: Candidate availability / notice period,   hiring_constraint_short_name: Candidate availability,    is_material_constraint: true,  sort_order: 6}
+  - {hiring_constraint_key: 7, hiring_constraint_code: no_material_constraint, hiring_constraint_name: No material constraint,                   hiring_constraint_short_name: No material constraint,    is_material_constraint: false, sort_order: 7}
+
+relationships:
+  - {to: fct_requisition, columns: {hiring_constraint_key: hiring_constraint_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_risk, columns: {hiring_constraint_key: hiring_constraint_key}, cardinality: one_to_many, active: true}
+
+business_rules:
+  - Constraint belongs to the requisition. Every open position on the requisition inherits it; the visual weight is SUM(openings_position), never a requisition count.
+  - A requisition has exactly one current primary constraint. Open requisitions must not have an unknown constraint; closed and cancelled requisitions may keep their last value or "No material constraint".
+
+data_quality_tests:
+  - {test: unique, columns: [hiring_constraint_key]}
+  - {test: unique, columns: [hiring_constraint_code]}
+  - {test: not_null, columns: [hiring_constraint_key, hiring_constraint_code, hiring_constraint_short_name]}
+  - {test: referential_integrity, description: Every hiring_constraint_key on fct_requisition exists here.}
+
+power_bi:
+  hide_columns: [hiring_constraint_key]
+  sort_by: {hiring_constraint_short_name: sort_order}
+  notes: Bar axis = hiring_constraint_short_name; value = Open Positions measure from mart_exec_risk. Sort the visual by value descending on the page.

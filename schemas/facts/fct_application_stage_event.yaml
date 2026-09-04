@@ -1,0 +1,146 @@
+dataset: fct_application_stage_event
+layer: fact
+version: 1.0
+purpose: >
+  Stage-movement fact: one row each time an application enters a recruiting
+  stage. It is the source of historical stage-to-stage conversion, completed
+  days in stage (median), active stage age, and the stage-entry populations used
+  to train stage-to-acceptance yield. Completed intervals and open intervals are
+  explicitly separated so in-process candidates are never counted as failures.
+
+grain: One row per application per stage entry, ordered by stage_sequence_number.
+
+primary_key: [stage_event_key]
+unique_keys:
+  - [application_key, stage_sequence_number]
+
+source: >
+  Applicant tracking system stage history, restricted to entries on or before
+  as_of_date. Requisition attributes inherited from fct_requisition via the application.
+
+columns:
+  - name: stage_event_key
+    type: integer
+    nullable: false
+  - name: application_key
+    type: integer
+    nullable: false
+  - name: requisition_key
+    type: integer
+    nullable: false
+    description: Denormalised from the application.
+  - name: thd_date_key
+    type: integer
+    nullable: false
+    description: Requisition THD key, inherited. Lets the THD slicer filter pipeline visuals.
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: recruiting_stage_key
+    type: integer
+    nullable: false
+    description: Stage entered (dim_recruiting_stage).
+  - name: stage_sequence_number
+    type: integer
+    nullable: false
+    description: 1 for the first stage the application entered, incrementing per entry.
+  - name: stage_entry_date
+    type: date
+    nullable: false
+  - name: stage_exit_date
+    type: date
+    nullable: true
+    description: Date the application left this stage. Null while the application is still in the stage.
+  - name: is_completed
+    type: boolean
+    nullable: false
+    description: stage_exit_date IS NOT NULL. Only completed rows feed conversion and days-in-stage.
+  - name: is_current_stage
+    type: boolean
+    nullable: false
+    description: true for the last row of each application. For active applications this row has stage_exit_date null.
+  - name: days_in_stage
+    type: integer
+    nullable: true
+    description: stage_exit_date - stage_entry_date. Populated only when is_completed. Source of Median Days in Stage (EXEC-12).
+  - name: active_stage_age_days
+    type: integer
+    nullable: true
+    description: as_of_date - stage_entry_date. Populated only for the open current stage of active applications. Never mixed with days_in_stage.
+  - name: advanced_to_next_stage
+    type: boolean
+    nullable: true
+    description: >
+      For completed rows: true when the application moved to dim_recruiting_stage.next_stage_code
+      (or, for the offer stage, accepted the offer); false when it left the process from this stage.
+      Null while not completed. Source of Stage-to-Stage Conversion (EXEC-11).
+  - name: exit_reason
+    type: string
+    nullable: true
+    description: Why the application left the process from this stage. Null when advanced or not completed.
+    accepted_values: [rejected, withdrawn, offer_declined, offer_rescinded, null]
+  - name: sla_days
+    type: integer
+    nullable: false
+    description: Denormalised from dim_recruiting_stage for convenience in row-level SLA checks.
+  - name: exceeded_sla
+    type: boolean
+    nullable: true
+    description: days_in_stage > sla_days. Populated only when is_completed.
+
+relationships:
+  - {to: dim_date, columns: {thd_date_key: date_key}, cardinality: many_to_one, active: true, role: target_hire_date}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_recruiting_stage, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: many_to_one, active: true}
+  - {to: fct_application, columns: {application_key: application_key}, cardinality: many_to_one, active: false, notes: Logical only; not modelled in Power BI.}
+
+business_rules:
+  - Stage Conversion for stage S = SUM(advanced_to_next_stage) / COUNT(is_completed) over rows in S. Rows with is_completed = false are excluded from both numerator and denominator.
+  - Days in Stage is only defined for completed rows. Active stage age is a separate, operational measure.
+  - Each application has exactly one row with is_current_stage = true, and at most one row with stage_exit_date null (only active applications).
+  - Stage order normally increases with stage_sequence_number. A return to an earlier stage is allowed only when the process genuinely permits it and must not create duplicate (application, stage, entry_date) rows.
+  - Every completed application (has_final_outcome) has its final stage completed; a hired application's offer row is completed with advanced_to_next_stage = true.
+  - No stage_entry_date or stage_exit_date after as_of_date.
+
+data_quality_tests:
+  - {test: unique, columns: [stage_event_key]}
+  - {test: unique, columns: [application_key, stage_sequence_number]}
+  - {test: unique, columns: [application_key, recruiting_stage_key, stage_entry_date]}
+  - {test: not_null, columns: [stage_event_key, application_key, requisition_key, recruiting_stage_key, stage_sequence_number, stage_entry_date, is_completed, is_current_stage, sla_days]}
+  - {test: expression, expression: "stage_exit_date >= stage_entry_date", filter: is_completed}
+  - {test: expression, expression: "stage_entry_date <= as_of_date AND (stage_exit_date IS NULL OR stage_exit_date <= as_of_date)"}
+  - {test: expression, expression: "is_completed = (stage_exit_date IS NOT NULL)"}
+  - {test: expression, expression: "is_completed implies days_in_stage = DATEDIFF(stage_entry_date, stage_exit_date) AND advanced_to_next_stage IS NOT NULL AND active_stage_age_days IS NULL"}
+  - {test: expression, expression: "NOT is_completed implies days_in_stage IS NULL AND advanced_to_next_stage IS NULL AND exit_reason IS NULL AND active_stage_age_days = DATEDIFF(stage_entry_date, as_of_date)"}
+  - {test: expression, expression: "advanced_to_next_stage = false implies exit_reason IS NOT NULL"}
+  - {test: expression, expression: "advanced_to_next_stage = true implies exit_reason IS NULL"}
+  - {test: expression, expression: "exactly one row per application_key has is_current_stage = true"}
+  - {test: reconciliation, expression: "rows with stage_exit_date IS NULL correspond 1:1 to fct_application rows with is_active_pipeline = true", severity: error}
+  - {test: reconciliation, expression: "stage_entry_date of sequence n+1 = stage_exit_date of sequence n for the same application"}
+  - {test: reconciliation, expression: "advanced_to_next_stage = true on a row implies the next row's stage = dim_recruiting_stage.next_stage_code, or for offer the application is hired"}
+  - {test: reconciliation, expression: "COUNT(offer rows with advanced_to_next_stage = true) = COUNT(fct_application.is_offer_accepted)"}
+  - {test: referential_integrity, description: All dimension keys exist; application_key exists in fct_application.}
+
+power_bi:
+  hide_columns: [stage_event_key, application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key]
+  summarization_off: [days_in_stage, active_stage_age_days, stage_sequence_number, sla_days]
+  measures:
+    - name: Stage Completed Count
+      dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[is_completed] = TRUE)
+    - name: Stage Advanced Count
+      dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[advanced_to_next_stage] = TRUE)
+    - name: Stage Conversion
+      dax: DIVIDE([Stage Advanced Count], [Stage Completed Count])
+    - name: Median Completed Days in Stage
+      dax: MEDIAN(fct_application_stage_event[days_in_stage])   -- open rows are blank and ignored
+  notes: >
+    Governed source for stage conversion and median days in stage under any slicer combination.
+    mart_exec_pipeline reconciles to these measures at its grain.

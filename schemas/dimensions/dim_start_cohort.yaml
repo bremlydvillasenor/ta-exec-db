@@ -1,0 +1,89 @@
+dataset: dim_start_cohort
+layer: dimension
+version: 1.0
+purpose: >
+  Employee start-month cohort dimension for the hiring-quality visuals. It is the
+  x-axis of the Speed vs 60-Day Early Attrition chart and the single place where
+  cohort maturity and the rolling-12 KPI window are decided. It is deliberately
+  separate from dim_date so the Target Hire Date slicer cannot truncate or
+  distort the 60-day observation window.
+
+grain: One row per calendar month from January 2024 through the as-of month (May 2026).
+
+primary_key: [cohort_month_key]
+unique_keys:
+  - [cohort_start_month]
+
+source: >
+  Generated from ref_reporting_config (history_start_date, as_of_date,
+  attrition_window_days, quality_rolling_cohort_count).
+
+columns:
+  - name: cohort_month_key
+    type: integer
+    nullable: false
+    description: yyyymm (e.g. 202603).
+  - name: cohort_start_month
+    type: date
+    nullable: false
+    description: First day of the start month.
+  - name: cohort_month_end_date
+    type: date
+    nullable: false
+    description: Last day of the start month.
+  - name: cohort_month_label
+    type: string
+    nullable: false
+    description: e.g. "Mar 2026". Sort by cohort_month_key.
+  - name: cohort_maturity_date
+    type: date
+    nullable: false
+    description: cohort_month_end_date + attrition_window_days (60). The day on which every possible start date in the month has a full 60-day window.
+  - name: is_fully_matured_start_month
+    type: boolean
+    nullable: false
+    description: true when cohort_maturity_date <= as_of_date. Only these months may feed the quality KPI and trend.
+  - name: matured_cohort_sequence
+    type: integer
+    nullable: true
+    description: 1 for the latest fully matured month, 2 for the one before, and so on. Null for immature months.
+  - name: kpi_cohort_window
+    type: string
+    nullable: false
+    description: >
+      latest_12 = the 12 most recent fully matured months (the KPI period);
+      prior_12 = the 12 fully matured months before that (comparison period);
+      outside = any other month, including immature months.
+    accepted_values: [latest_12, prior_12, outside]
+  - name: is_latest_fully_matured_cohort
+    type: boolean
+    nullable: false
+    description: true for exactly one row. Drives the latest-fully-matured-cohort label (Mar 2026 for the configured as-of date).
+
+relationships:
+  - {to: fct_hire_outcome, columns: {cohort_month_key: cohort_month_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_quality, columns: {cohort_month_key: cohort_month_key}, cardinality: one_to_many, active: true}
+
+business_rules:
+  - A month is fully matured only when its last day plus 60 days is on or before the as-of date. With as_of_date = 2026-05-31 the latest fully matured month is March 2026 (2026-03-31 + 60 days = 2026-05-30). April 2026 is not matured (2026-04-30 + 60 = 2026-06-29).
+  - The latest matured cohort is derived from the rule above, never hard-coded.
+  - kpi_cohort_window is the only definition of the rolling-12 KPI period. It counts matured months, not calendar months.
+  - No relationship to dim_date. The THD slicer must never reach this dimension.
+
+data_quality_tests:
+  - {test: unique, columns: [cohort_month_key]}
+  - {test: not_null, columns: [cohort_month_key, cohort_start_month, is_fully_matured_start_month, kpi_cohort_window]}
+  - {test: accepted_values, column: kpi_cohort_window, values: [latest_12, prior_12, outside]}
+  - {test: row_count_equals, value: 12, filter: kpi_cohort_window = 'latest_12'}
+  - {test: row_count_equals, value: 1, filter: is_latest_fully_matured_cohort = true}
+  - {test: expression, expression: "is_fully_matured_start_month = (cohort_maturity_date <= as_of_date)"}
+  - {test: expression, expression: "kpi_cohort_window <> 'outside' implies is_fully_matured_start_month = true"}
+
+power_bi:
+  hide_columns: [cohort_month_key, cohort_maturity_date]
+  sort_by: {cohort_month_label: cohort_month_key}
+  notes: >
+    Use cohort_month_label as the x-axis of the Speed vs 60-Day Early Attrition chart with a
+    visual-level filter kpi_cohort_window = "latest_12". Quality measures filter on this
+    dimension in DAX; they never reference dim_date. Business Unit, Job Family and Job Level
+    slicers still reach fct_hire_outcome and mart_exec_quality through their own dimensions.
