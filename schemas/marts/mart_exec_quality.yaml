@@ -1,6 +1,6 @@
 dataset: mart_exec_quality
 layer: mart
-version: 1.0
+version: 1.1
 purpose: >
   Hiring-quality mart behind the 60-Day Early Attrition KPI and the Speed vs
   60-Day Early Attrition dual-axis chart. It aggregates fct_hire_outcome by
@@ -74,10 +74,12 @@ relationships:
   - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
 
 business_rules:
+  - Population is HIRES ONLY: people who actually started employment (fct_application.is_started = true, one row each in fct_hire_outcome). Accepted offers that never started - pending a start date, rescinded by the employer, or reneged by the candidate - are not hires and are in neither the numerator nor the denominator.
   - Date basis is employee start month. No relationship to dim_date, so the THD slicer cannot reach this table.
   - The KPI is a weighted aggregate: SUM(early_attrition_60d_count) / SUM(matured_hires_60d) over rows where kpi_cohort_window = latest_12. It is never the average of the twelve monthly rates.
   - The trend shows only rows with kpi_cohort_window = latest_12 (12 fully matured cohorts). The prior_12 window supports the period-over-period comparison.
-  - Speed and quality on the chart come from the same hires: median Time to Fill uses the matured hires of the cohort, not THD-based accepted offers.
+  - Speed and quality on the chart come from the same hires: median Time to Fill uses the matured hires of the cohort, not THD-based accepted offers. It therefore covers fewer accepted offers than EXEC-05, which keeps every acceptance event including those that never became a start. That difference is expected and must not be "corrected" by adding non-started accepted offers to a cohort.
+  - A candidate renege or an employer rescind is a pre-start loss and can never appear as early attrition. Only a termination after a real employee start does.
   - The chart is diagnostic association, not causation.
 
 data_quality_tests:

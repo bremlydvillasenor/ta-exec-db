@@ -72,7 +72,11 @@ columns:
   - name: filled_positions
     type: integer
     nullable: false
-    description: Context for tooltips.
+    description: >
+      Active fills on this requisition (accepted offers not later rescinded or
+      reneged). Context for tooltips. A seat reopened after a post-acceptance loss
+      appears in openings_position, not here, so the risk view shows the seat as work
+      still to do.
   - name: openings_position
     type: integer
     nullable: false

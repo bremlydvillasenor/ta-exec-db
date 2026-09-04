@@ -1,12 +1,16 @@
 dataset: mart_exec_demand
 layer: mart
-version: 1.0
+version: 1.1
 purpose: >
   THD-month executive mart for hiring demand, delivery and forecast. It feeds the
   Fill Rate KPI card (with its Demand / Filled / Open context), the Median Time to
   Fill KPI reference value, and the "Actual Fill Rate vs Forecast Fill Rate" trend.
   Demand and forecast share one grain and one filter context, so they are kept in
   one table instead of two.
+  Fill Rate here is CURRENT fill: filled_positions counts active fills only, so a
+  seat whose accepted offer was later rescinded or reneged is restated as open. The
+  historical accepted-offer events are carried alongside in accepted_offer_events and
+  never decrease.
 
 grain: One row per Target Hire Date month + Business Unit + Job Family + Job Level with at least one non-cancelled requisition.
 
@@ -14,7 +18,8 @@ primary_key: [thd_month_key, business_unit_key, job_family_key, job_level_key]
 
 source: >
   fct_requisition (non-cancelled rows) aggregated by THD month and segment.
-  Median Time to Fill from fct_application accepted offers on the same requisitions.
+  Median Time to Fill from every fct_application accepted-offer event on the same
+  requisitions, including offers later rescinded or reneged.
 
 columns:
   - name: thd_month_key
@@ -44,7 +49,10 @@ columns:
   - name: filled_positions
     type: integer
     nullable: false
-    description: SUM(fct_requisition.filled_positions). Positions Filled (EXEC-02).
+    description: >
+      SUM(fct_requisition.filled_positions). Positions Filled (EXEC-02) = ACTIVE FILLS:
+      accepted offers that have not subsequently been rescinded or reneged. Current
+      state, so it can go down between refreshes.
   - name: open_positions
     type: integer
     nullable: false
@@ -53,14 +61,35 @@ columns:
     type: decimal(6,4)
     nullable: true
     description: filled_positions / requested_positions at this row grain. Reference value; Power BI recomputes as SUM/SUM.
-  - name: accepted_offer_count
+  - name: accepted_offer_events
     type: integer
     nullable: false
-    description: Accepted offers on these requisitions. Denominator context for the median.
+    description: >
+      SUM(fct_requisition.accepted_offer_events). Historical TA fill events on these
+      requisitions, including offers later rescinded or reneged. Never decreases.
+      Also the denominator context for median_time_to_fill_days. Replaces the former
+      accepted_offer_count, which mixed the historical event with current fill.
+  - name: lost_after_acceptance_positions
+    type: integer
+    nullable: false
+    description: >
+      SUM(fct_requisition.lost_after_acceptance_positions). Seats whose accepted offer
+      was later rescinded by the employer or reneged by the candidate. Makes the gap
+      between historical delivery and current fill explicit instead of invisible.
+  - name: started_positions
+    type: integer
+    nullable: false
+    description: >
+      SUM(fct_requisition.started_positions). Seats where the person actually started
+      (hires). Subset of filled_positions; the rest are accepted offers pending a start.
   - name: median_time_to_fill_days
     type: decimal(6,1)
     nullable: true
-    description: Median time_to_fill_days of accepted offers in this cell. Valid only at row grain (medians do not aggregate). Power BI computes filtered medians from fct_application.
+    description: >
+      Median time_to_fill_days over every accepted-offer event in this cell, INCLUDING
+      offers later rescinded or reneged, because Time to Fill measures the recruiting
+      cycle TA actually completed. Valid only at row grain (medians do not aggregate).
+      Power BI computes filtered medians from fct_application.
   - name: active_pipeline_applications
     type: integer
     nullable: false
@@ -86,6 +115,9 @@ relationships:
 
 business_rules:
   - Cancelled requisitions are excluded before aggregation.
+  - filled_positions is current state (active fills); accepted_offer_events is history. accepted_offer_events = filled_positions + lost_after_acceptance_positions in every row.
+  - When an accepted offer is rescinded or reneged and the seat re-opens, the seat moves from filled_positions to open_positions in the same row. Fill Rate falls, demand is unchanged, and accepted_offer_events stays where it was.
+  - Do not use accepted_offer_events as a Fill Rate numerator, and do not use filled_positions as a historical delivery count.
   - requested_positions = filled_positions + open_positions in every row and therefore in every filter context.
   - forecast_filled_positions <= requested_positions in every row because the cap is applied at requisition level.
   - Forecast measures eventual attainment, not on-time delivery; a position can be forecast as filled after missing its TOAD.
@@ -93,8 +125,10 @@ business_rules:
 
 data_quality_tests:
   - {test: unique, columns: [thd_month_key, business_unit_key, job_family_key, job_level_key]}
-  - {test: not_null, columns: [thd_month_key, requested_positions, filled_positions, open_positions, expected_pipeline_fills, forecast_filled_positions]}
+  - {test: not_null, columns: [thd_month_key, requested_positions, filled_positions, accepted_offer_events, lost_after_acceptance_positions, started_positions, open_positions, expected_pipeline_fills, forecast_filled_positions]}
   - {test: expression, expression: "requested_positions = filled_positions + open_positions", severity: error}
+  - {test: expression, expression: "accepted_offer_events = filled_positions + lost_after_acceptance_positions", severity: error}
+  - {test: expression, expression: "started_positions <= filled_positions", severity: error}
   - {test: expression, expression: "forecast_filled_positions = filled_positions + expected_pipeline_fills"}
   - {test: expression, expression: "forecast_filled_positions <= requested_positions", severity: error}
   - {test: expression, expression: "expected_pipeline_fills <= open_positions"}
@@ -102,7 +136,10 @@ data_quality_tests:
   - {test: expression, expression: "forecast_fill_rate >= fill_rate", filter: fill_rate IS NOT NULL}
   - {test: reconciliation, expression: "SUM(requested_positions) = SUM(fct_requisition.requested_positions WHERE NOT is_cancelled) in total and per segment", severity: error}
   - {test: reconciliation, expression: "SUM(open_positions) = SUM(mart_exec_risk.openings_position) in total and per segment", severity: error}
-  - {test: reconciliation, expression: "SUM(accepted_offer_count) = COUNT(fct_application.is_offer_accepted)"}
+  - {test: reconciliation, expression: "SUM(filled_positions) = COUNT(fct_application WHERE is_active_fill) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(accepted_offer_events) = COUNT(fct_application WHERE is_offer_accepted_event) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(lost_after_acceptance_positions) = COUNT(fct_application WHERE is_offer_accepted_event AND NOT is_active_fill)"}
+  - {test: reconciliation, expression: "SUM(started_positions) = COUNT(fct_hire_outcome rows) in total and per segment"}
 
 power_bi:
   hide_columns: [thd_month_key, business_unit_key, job_family_key, job_level_key, fill_rate, forecast_fill_rate, median_time_to_fill_days]
@@ -110,11 +147,17 @@ power_bi:
     - name: Requested Positions
       dax: SUM(mart_exec_demand[requested_positions])
     - name: Positions Filled
-      dax: SUM(mart_exec_demand[filled_positions])
+      dax: SUM(mart_exec_demand[filled_positions])   -- active fills (current state)
+    - name: Accepted Offer Events
+      dax: SUM(mart_exec_demand[accepted_offer_events])   -- historical TA fill events
+    - name: Post-Acceptance Losses
+      dax: SUM(mart_exec_demand[lost_after_acceptance_positions])
+    - name: Started Positions
+      dax: SUM(mart_exec_demand[started_positions])
     - name: Open Positions
       dax: SUM(mart_exec_demand[open_positions])
     - name: Fill Rate
-      dax: DIVIDE([Positions Filled], [Requested Positions])
+      dax: DIVIDE([Positions Filled], [Requested Positions])   -- current fill rate
     - name: Fill Rate Target
       dax: MAX(ref_reporting_config[fill_rate_target])
     - name: Expected Pipeline Fills
@@ -129,3 +172,7 @@ power_bi:
   notes: >
     Use a month-grain THD slicer. Median Time to Fill KPI comes from fct_application
     (MEDIAN) so it honours all slicers; the stored median here is for validation.
+    [Positions Filled] answers "how many seats are filled right now"; [Accepted Offer
+    Events] answers "how many offers did TA get accepted". They differ by
+    [Post-Acceptance Losses]. Use the loss measure as the tooltip or footer whenever
+    Fill Rate drops for a reason other than new demand.

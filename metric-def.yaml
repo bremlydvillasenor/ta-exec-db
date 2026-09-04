@@ -5,30 +5,65 @@
 
 contract:
   name: ta_exec_summary_metrics
-  version: 1.0
+  version: 1.1
   as_of_date: 2026-05-31          # from ref_reporting_config; never the system date
+
+  # ---------------------------------------------------------------- governed vocabulary
+  # These three words are not interchangeable. Every metric below states which one it uses.
+  definitions:
+    offer_accepted:
+      meaning: Historical Talent Acquisition fill event.
+      rule: >
+        A candidate accepted an offer on or before the as-of date. This is an immutable
+        historical event. A later employer rescind or candidate renege does NOT undo it
+        and does NOT clear offer_accepted_date.
+      column: fct_application.is_offer_accepted_event / offer_accepted_date
+      used_by: [EXEC-05 Median Time to Fill, EXEC-11 offer-stage conversion, SUPP-06]
+    active_fill:
+      meaning: Current fill state of a seat.
+      rule: >
+        An accepted offer that has NOT subsequently been rescinded or reneged. If it is
+        lost after acceptance the seat is restated as open.
+      column: fct_application.is_active_fill / fct_requisition.filled_positions
+      used_by: [EXEC-01 Fill Rate, EXEC-02 Positions Filled, FCST-01 to FCST-04]
+    hire:
+      meaning: Employment event.
+      rule: >
+        The person actually started employment on or before the as-of date. Narrower than
+        an active fill: an accepted offer awaiting a start date is a fill but not yet a hire.
+      column: fct_application.is_started / fct_hire_outcome
+      used_by: [EXEC-13 60-Day Early Attrition, EXEC-14 Speed vs Quality, SUPP-02, SUPP-03, SUPP-08]
+
   conventions:
     - Rates are stored and computed as decimals 0-1; percentage formatting belongs to Power BI.
     - Every rate is computed as SUM(numerator) / SUM(denominator) in the current filter context, never as an average of rates.
     - Medians are computed in Power BI with MEDIAN() over the governed fact; mart medians are row-grain reference values only.
     - Delivery metrics filter on Target Hire Date (dim_date); quality metrics filter on employee start cohort (dim_start_cohort) and ignore the THD slicer.
     - Business Unit, Job Family and Job Level slicers apply to every metric.
+    - Offer acceptance is an immutable historical event; current fill status is a separate current-state concept. No metric may define one from the other.
+    - No metric may be defined from an application status value. Statuses change; event flags do not. Use is_offer_accepted_event, is_active_fill and is_started.
+    - Historical metrics (Time to Fill, offer-stage conversion) keep an accepted offer that was later lost. Current-state metrics (Fill Rate, Positions Filled) drop it. Both behaviours are correct and intentional; the difference is reported as SUPP-07.
 
 metrics:
 
   # ---------------------------------------------------------------- Delivery
   - metric_id: EXEC-01
     name: Fill Rate
-    business_question: Of the positions the business expects to fill in the selected demand period, how many have been filled?
-    description: Position-based demand attainment. Not the share of requisitions closed.
-    formula: Positions Filled / Requested Positions
+    business_question: Of the positions the business expects to fill in the selected demand period, how many are filled right now?
+    description: >
+      Position-based demand attainment, on CURRENT fill state. The numerator counts
+      active fills (accepted offers not subsequently rescinded or reneged), so a seat
+      lost after acceptance is restated as open and Fill Rate falls. Not the share of
+      requisitions closed, and not a historical delivery count.
+    concept: active_fill
+    formula: Positions Filled (active fills) / Requested Positions
     numerator: SUM(filled_positions)
     denominator: SUM(requested_positions)
     aggregation: ratio_of_sums
     date_basis: target_hire_date (THD)
     population: Non-cancelled requisitions with THD in the selected period.
     filters: [thd_period, business_unit, job_family, job_level]
-    exclusions: [cancelled requisitions, cancelled positions, offers extended but not accepted]
+    exclusions: [cancelled requisitions, cancelled positions, offers extended but not accepted, accepted offers subsequently rescinded by the employer, accepted offers subsequently reneged by the candidate]
     target: ref_reporting_config.fill_rate_target (0.90)
     format: percent, 1 decimal
     source_dataset: mart_exec_demand (governed source fct_requisition)
@@ -42,12 +77,22 @@ metrics:
       - Result is identical when computed from fct_requisition and from mart_exec_demand for any slicer combination.
       - 0 <= value <= 1.
       - Requested Positions = Positions Filled + Open Positions in the same context.
-    notes: Card footer shows Demand, Filled and Open (EXEC-03, EXEC-02, EXEC-04).
+      - The numerator is is_active_fill, never is_offer_accepted_event and never an application status value.
+      - When an accepted offer is rescinded or reneged and the seat re-opens, Fill Rate must fall in the next refresh while Accepted Offer Events (SUPP-06) is unchanged.
+      - Fill Rate <= Historical Delivery Rate (SUPP-06 / Requested Positions) in every context.
+    notes: >
+      Card footer shows Demand, Filled and Open (EXEC-03, EXEC-02, EXEC-04). Where Fill
+      Rate drops without new demand, show Post-Acceptance Losses (SUPP-07) as the
+      explanation rather than leaving the drop unexplained.
 
   - metric_id: EXEC-02
-    name: Positions Filled
-    business_question: How many required positions has TA successfully filled?
-    description: Seats with an accepted offer on or before the as-of date.
+    name: Positions Filled (Active Fills)
+    business_question: How many required positions are filled right now?
+    description: >
+      Seats currently held by an accepted offer that has not subsequently been rescinded
+      or reneged. Current state, so this number can go down between refreshes. For the
+      historical count of accepted offers use SUPP-06 instead.
+    concept: active_fill
     formula: SUM(filled_positions)
     numerator: SUM(filled_positions)
     denominator: null
@@ -55,7 +100,7 @@ metrics:
     date_basis: target_hire_date (THD)
     population: Non-cancelled requisitions with THD in the selected period.
     filters: [thd_period, business_unit, job_family, job_level]
-    exclusions: [cancelled requisitions, offers extended but not accepted, accepted offers after the as-of date (cannot exist)]
+    exclusions: [cancelled requisitions, offers extended but not accepted, accepted offers subsequently rescinded or reneged, accepted offers after the as-of date (cannot exist)]
     target: null
     format: integer
     source_dataset: mart_exec_demand (governed source fct_requisition)
@@ -63,9 +108,13 @@ metrics:
     power_bi_measure_guidance: |
       Positions Filled = SUM(mart_exec_demand[filled_positions])
     validation_rules:
-      - Equals COUNT of fct_application rows with is_offer_accepted = true on the same requisitions.
+      - Equals COUNT of fct_application rows with is_active_fill = true on the same requisitions.
       - Never exceeds Requested Positions.
-    notes: null
+      - Equals SUPP-06 minus SUPP-07 in every context.
+      - Never derived from application_status_current; the removed status value 'hired' must not reappear in any definition.
+    notes: >
+      An accepted offer that has not started yet is still a fill. It becomes a hire only
+      when the person starts (SUPP-08).
 
   - metric_id: EXEC-03
     name: Requested Positions (Demand)
@@ -117,27 +166,42 @@ metrics:
   - metric_id: EXEC-05
     name: Median Time to Fill
     business_question: How long does it typically take TA to secure an accepted offer?
-    description: Median days from requisition approval to offer acceptance, accepted offers only.
+    description: >
+      Median days from requisition approval to offer acceptance, over every accepted-offer
+      EVENT. The original accepted offer stays in the population even if the offer was
+      later rescinded or the candidate reneged, because Time to Fill measures the
+      recruiting cycle TA actually completed. Removing it would rewrite history and
+      silently bias the cycle time.
+    concept: offer_accepted
     formula: MEDIAN(offer_accepted_date - requisition_approval_date)
     numerator: null
     denominator: null
     aggregation: median
     date_basis: target_hire_date (THD) of the associated requisition; re-cohorted by employee start month in EXEC-14
-    population: Accepted offers on or before the as-of date, on non-cancelled requisitions with THD in the selected period.
+    population: >
+      Every accepted-offer event on or before the as-of date, on non-cancelled requisitions
+      with THD in the selected period. Includes offers later rescinded by the employer or
+      reneged by the candidate.
     filters: [thd_period, business_unit, job_family, job_level]
-    exclusions: [declined, rescinded and withdrawn offers, active candidates]
+    exclusions: [offers declined before acceptance, offers rescinded BEFORE acceptance, pre-acceptance withdrawals, active candidates]
     target: null
     format: integer days
     source_dataset: fct_application.time_to_fill_days
-    required_columns: [time_to_fill_days, is_offer_accepted, thd_date_key, business_unit_key, job_family_key, job_level_key]
+    required_columns: [time_to_fill_days, is_offer_accepted_event, thd_date_key, business_unit_key, job_family_key, job_level_key]
     power_bi_measure_guidance: |
       Median Time to Fill = MEDIAN(fct_application[time_to_fill_days])
-      time_to_fill_days is blank on non-accepted rows, so MEDIAN ignores them.
+      time_to_fill_days is blank only when there was no acceptance event, so MEDIAN ignores
+      exactly those rows. Do NOT add a filter on is_active_fill or is_started here.
       Do not average mart_exec_demand[median_time_to_fill_days].
     validation_rules:
-      - time_to_fill_days >= 0 for every accepted offer.
+      - time_to_fill_days >= 0 for every accepted-offer event.
+      - time_to_fill_days and offer_accepted_date are populated for rescinded and reneged accepted offers; a pipeline that nulls them on a post-acceptance loss is a defect.
+      - COUNT of non-blank time_to_fill_days = SUPP-06 (Accepted Offer Events), not EXEC-02.
       - Unfiltered value equals the row-grain median in mart_exec_demand when the mart is at total grain.
-    notes: Median chosen over mean because cycle times have long-tail outliers.
+    notes: >
+      Median chosen over mean because cycle times have long-tail outliers. The population
+      is intentionally wider than EXEC-02: speed of delivery and current fill state are
+      different questions.
 
   # ---------------------------------------------------------------- Risk
   - metric_id: EXEC-06
@@ -266,7 +330,7 @@ metrics:
     date_basis: as_of_date snapshot; THD of the requisition for period selection
     population: Active applications on open requisitions.
     filters: [thd_period, business_unit, job_family, job_level, recruiting_stage]
-    exclusions: [hired, rejected, withdrawn, declined and rescinded applications; applications on closed or cancelled requisitions]
+    exclusions: [applications with any final outcome - accepted, started, rejected, withdrawn, declined, rescinded or reneged; applications on closed or cancelled requisitions]
     target: null
     format: integer with data bar
     source_dataset: mart_exec_pipeline (governed source fct_application)
@@ -280,7 +344,13 @@ metrics:
   - metric_id: EXEC-11
     name: Historical Stage-to-Stage Conversion
     business_question: At which recruiting stages are candidates most likely to fall out?
-    description: Share of completed stage exits that advanced to the next stage (or accepted the offer for the Offer stage).
+    description: >
+      Share of completed stage exits that advanced to the next stage. For the Offer stage
+      the successful exit is the offer-acceptance EVENT: an accepted offer stays a
+      successful conversion even if the offer was later rescinded, the candidate reneged,
+      or the person never started. This metric describes what the recruiting process
+      achieved at that point in time; current fill state is EXEC-01.
+    concept: offer_accepted
     formula: Candidates advancing to next stage / Candidates completing the stage
     numerator: SUM(stage_advanced_count)
     denominator: SUM(stage_completed_count)
@@ -289,6 +359,7 @@ metrics:
     population: Completed stage-event rows (stage_exit_date not null).
     filters: [thd_period, business_unit, job_family, job_level, recruiting_stage]
     exclusions: [stage-event rows still open (candidate still in the stage)]
+    not_excluded: [accepted offers later rescinded by the employer, accepted offers later reneged by the candidate, accepted offers with no start yet]
     target: null
     format: percent, 0 decimals
     source_dataset: mart_exec_pipeline (governed source fct_application_stage_event)
@@ -299,8 +370,13 @@ metrics:
     validation_rules:
       - Candidates still in process are in neither numerator nor denominator.
       - 0 <= value <= 1.
-      - Offer-stage conversion equals accepted offers / completed offer exits.
-    notes: Stage flow (next stage) is governed in dim_recruiting_stage seed rows.
+      - Offer-stage conversion equals accepted-offer EVENTS / completed offer exits, i.e. COUNT(is_offer_accepted_event) / COUNT(completed offer rows). It must not be computed from is_active_fill, is_started or any application status.
+      - A post-acceptance rescind or renege must not change this value for any prior period. Re-running the pipeline on an unchanged as-of date must reproduce it exactly.
+      - Offer-stage conversion >= the equivalent active-fill rate; the gap is SUPP-07.
+    notes: >
+      Stage flow (next stage) is governed in dim_recruiting_stage seed rows. Offer-stage
+      conversion is intentionally more generous than Fill Rate: it credits TA with the
+      acceptance it achieved, while Fill Rate reports the seat's current status.
 
   - metric_id: EXEC-12
     name: Median Completed Days in Stage
@@ -350,11 +426,18 @@ metrics:
   # ---------------------------------------------------------------- Forecast
   - metric_id: FCST-01
     name: Stage-to-Acceptance Yield
-    business_question: Historically, what share of candidates who reached a given stage eventually accepted an offer?
-    description: Training probability per segment and stage, with documented fallback for small segments.
-    formula: reached_acceptance_count / entered_stage_count
-    numerator: applications with final outcome that entered the stage and were hired
-    denominator: applications with final outcome that entered the stage
+    business_question: Historically, what share of candidates who reached a given stage eventually filled a seat?
+    description: >
+      Training probability per segment and stage, with documented fallback for small
+      segments. The training target is the ACTIVE FILL - an accepted offer that was not
+      later rescinded or reneged - so that the forecast stays on the same definition as
+      filled_positions and Forecast Fill Rate stays comparable with Fill Rate. An offer
+      accepted and then lost trains as a failure here, even though EXEC-11 still counts
+      it as a successful historical offer-stage conversion.
+    concept: active_fill
+    formula: reached_active_fill_count / entered_stage_count
+    numerator: applications with a final outcome that entered the stage and became an active fill
+    denominator: applications with a final outcome that entered the stage
     aggregation: ratio_of_sums (trained once per segment + stage)
     date_basis: outcomes on or before as_of_date only
     population: Applications with has_final_outcome = true (not active).
@@ -363,18 +446,29 @@ metrics:
     target: null
     format: percent, 1 decimal (audit only)
     source_dataset: mart_stage_yield
-    required_columns: [entered_stage_count, reached_acceptance_count, applied_yield, yield_segment_level, applied_observations]
+    required_columns: [entered_stage_count, reached_active_fill_count, reached_acceptance_event_count, applied_yield, yield_segment_level, applied_observations]
     power_bi_measure_guidance: Not shown on the page. Optional tooltip = MAX(mart_stage_yield[applied_yield]).
     validation_rules:
       - 0 <= yield <= 1.
+      - Numerator is is_active_fill, not is_offer_accepted_event and not is_started.
+      - reached_active_fill_count <= reached_acceptance_event_count <= entered_stage_count.
       - Fallback order bu_jf_jl -> jf_jl -> jf -> all, using ref_reporting_config.forecast_min_segment_observations.
       - Not filtered by THD.
-    notes: Deterministic and reproducible for the same as-of date.
+    notes: >
+      Deterministic and reproducible for the same as-of date. The name is kept for
+      continuity, but from contract v1.1 the target is an active fill, not a raw
+      acceptance. reached_acceptance_event_count is stored alongside so the size of the
+      post-acceptance loss effect on the forecast is auditable.
 
   - metric_id: FCST-02
     name: Expected Pipeline Fills
     business_question: How many more positions is the current active pipeline likely to fill?
-    description: Sum of stage-to-acceptance probabilities over active candidates, capped per requisition at remaining open positions.
+    description: >
+      Sum of stage-to-acceptance probabilities over active candidates, capped per
+      requisition at remaining open positions. Because the yield predicts an active fill,
+      the expected fills are already net of typical post-acceptance loss. A seat reopened
+      by a rescind or renege is back in openings_position, so the pipeline is given a
+      fresh chance to fill it rather than the seat being double-counted as filled.
     formula: SUM over requisitions of LEAST(SUM(active candidate yield), openings_position)
     numerator: SUM(expected_pipeline_fills)
     denominator: null
@@ -396,7 +490,11 @@ metrics:
   - metric_id: FCST-03
     name: Forecast Filled Positions
     business_question: How many positions are likely to be filled eventually?
-    description: Actual filled positions plus expected pipeline fills.
+    description: >
+      Current active fills plus expected pipeline fills. Both terms are on the active-fill
+      definition, so the forecast is consistent with Fill Rate rather than with the
+      historical accepted-offer count.
+    concept: active_fill
     formula: Positions Filled + Expected Pipeline Fills
     numerator: SUM(filled_positions) + SUM(expected_pipeline_fills)
     denominator: null
@@ -410,7 +508,9 @@ metrics:
     source_dataset: mart_exec_demand
     required_columns: [filled_positions, expected_pipeline_fills, forecast_filled_positions]
     power_bi_measure_guidance: Forecast Filled Positions = [Positions Filled] + [Expected Pipeline Fills]
-    validation_rules: [Never exceeds Requested Positions.]
+    validation_rules:
+      - Never exceeds Requested Positions.
+      - "[Positions Filled] here is the active-fill measure; never substitute [Accepted Offer Events]."
     notes: null
 
   - metric_id: FCST-04
@@ -436,13 +536,20 @@ metrics:
       - Forecast Fill Rate >= Fill Rate in every context.
       - 0 <= value <= 1.
       - Uses only outcomes known on or before the as-of date.
+      - Numerator and denominator both use the active-fill definition, matching EXEC-01.
     notes: A position may forecast as eventually filled even after missing its TOAD; risk measures timeliness, forecast measures eventual attainment.
 
   # ---------------------------------------------------------------- Quality
   - metric_id: EXEC-13
     name: 60-Day Early Attrition
     business_question: Of the hires with a complete 60-day observation window, what percentage left within their first 60 days?
-    description: Primary hiring-quality outcome metric. A cohort quality measure, not an enterprise turnover rate.
+    description: >
+      Primary hiring-quality outcome metric. A cohort quality measure, not an enterprise
+      turnover rate. HIRE here means a person who actually STARTED employment
+      (fct_application.is_started = true). Accepted offers that never started - because
+      the start date has not arrived, the employer rescinded, or the candidate reneged -
+      are not hires and are in neither the numerator nor the denominator.
+    concept: hire
     formula: Hires terminated within 60 days of start / Hires in fully matured 60-day start cohorts
     numerator: SUM(early_attrition_60d_count)
     denominator: SUM(matured_hires_60d)
@@ -450,7 +557,7 @@ metrics:
     date_basis: employee start cohort month (dim_start_cohort), not THD
     population: Started hires in fully matured start months; KPI window = latest 12 fully matured cohorts (kpi_cohort_window = latest_12).
     filters: [business_unit, job_family, job_level]
-    exclusions: [immature hires, incomplete start months, hires not yet started, THD slicer]
+    exclusions: [immature hires, incomplete start months, accepted offers that have not started, accepted offers rescinded after acceptance, candidate reneges, THD slicer]
     target: ref_reporting_config.early_attrition_60d_target
     format: percent, 1 decimal
     source_dataset: mart_exec_quality (governed source fct_hire_outcome)
@@ -462,6 +569,8 @@ metrics:
       Card footer: [Early Exits 60d] & " early exits ÷ " & [Matured Hires 60d] & " matured hires · latest fully matured cohort: " & [Latest Matured Cohort]
     validation_rules:
       - Termination qualifies only when 0 <= termination_date - employee_start_date <= 60.
+      - Denominator counts started hires only. It must never be built from is_offer_accepted_event, is_active_fill, filled_positions or an application status value.
+      - A candidate renege or an employer rescind is a pre-start loss and never appears as early attrition. Only a termination after a real start does.
       - Denominator contains only fully matured start months (month end + 60 days <= as-of date).
       - KPI aggregates exactly 12 matured cohorts, not 12 calendar months.
       - Weighted result (87 / 1064 = 8.18% in the wireframe) is not the mean of monthly rates.
@@ -545,7 +654,7 @@ metrics:
     date_basis: employee start cohort month
     population: Fully matured start cohorts; window = latest 12 (kpi_cohort_window = latest_12).
     filters: [business_unit, job_family, job_level]
-    exclusions: [immature cohorts, THD slicer, THD-based accepted offers that have not started]
+    exclusions: [immature cohorts, THD slicer, accepted offers that have not started, accepted offers lost to rescind or renege]
     target: null
     format: left axis days (integer), right axis percent (1 decimal), n label per point
     source_dataset: fct_hire_outcome (speed) and mart_exec_quality (quality), both via dim_start_cohort
@@ -555,7 +664,111 @@ metrics:
       Right axis = [60-Day Early Attrition]; x-axis = dim_start_cohort[cohort_month_label]; visual filter kpi_cohort_window = "latest_12".
       Data label or tooltip = [Matured Hires 60d]; apply [Is Low Volume Cohort] for flagging.
     validation_rules:
-      - Both lines use the same hires (fct_hire_outcome rows of the cohort).
+      - Both lines use the same hires (fct_hire_outcome rows of the cohort), i.e. actual employee starts only.
       - Exactly 12 points when the cohort filter is applied.
+      - The speed line here counts fewer accepted offers than EXEC-05, because EXEC-05 keeps accepted offers that never became a start. This is expected; do not "fix" it by adding non-started accepted offers to the cohort.
       - The chart states association only; no causal wording.
     notes: Median Time to Fill here is re-cohorted by start month and will differ from EXEC-05, which is THD-based.
+
+  # ---------------------------------------------------------------- Offer-event context
+  - metric_id: SUPP-06
+    name: Accepted Offer Events
+    business_question: How many offers did TA get accepted in this period, regardless of what happened afterwards?
+    description: >
+      Historical TA delivery count. Every accepted offer on or before the as-of date,
+      including offers later rescinded by the employer or reneged by the candidate. This
+      number never decreases for a closed period; that is the whole point of separating it
+      from Positions Filled.
+    concept: offer_accepted
+    formula: SUM(accepted_offer_events)
+    numerator: SUM(accepted_offer_events)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions, offers extended but not accepted, offers rescinded BEFORE acceptance]
+    target: null
+    format: integer
+    source_dataset: mart_exec_demand (governed source fct_requisition.accepted_offer_events)
+    required_columns: [accepted_offer_events]
+    power_bi_measure_guidance: |
+      Accepted Offer Events = SUM(mart_exec_demand[accepted_offer_events])
+      Historical Delivery Rate = DIVIDE([Accepted Offer Events], [Requested Positions])
+    validation_rules:
+      - Equals COUNT of fct_application rows with is_offer_accepted_event = true in the same context.
+      - Equals EXEC-02 plus SUPP-07 in every context.
+      - Never decreases between refreshes for a period that is fully in the past.
+      - Equals the offer-stage numerator of EXEC-11 for the same population.
+    notes: >
+      Use this, not EXEC-02, whenever the question is about what TA delivered in a past
+      period. Use EXEC-02 whenever the question is about the state of the seats today.
+
+  - metric_id: SUPP-07
+    name: Post-Acceptance Losses
+    business_question: How many accepted offers were lost after acceptance, and how?
+    description: >
+      Seats whose accepted offer was later withdrawn - by the employer (rescind) or by the
+      candidate (renege). This is the bridge between historical delivery (SUPP-06) and
+      current fill (EXEC-02), and the reason Fill Rate can fall without demand changing.
+    concept: active_fill
+    formula: SUM(lost_after_acceptance_positions)
+    numerator: SUM(lost_after_acceptance_positions)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD)
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [cancelled requisitions, pre-acceptance declines, pre-acceptance rescinds, pre-acceptance withdrawals]
+    target: null
+    format: integer; optionally split employer rescind vs candidate renege
+    source_dataset: mart_exec_demand (governed source fct_requisition.lost_after_acceptance_positions)
+    required_columns: [lost_after_acceptance_positions]
+    power_bi_measure_guidance: |
+      Post-Acceptance Losses = SUM(mart_exec_demand[lost_after_acceptance_positions])
+      Employer Rescinds = CALCULATE(COUNTROWS(fct_application), fct_application[post_acceptance_outcome] = "employer_rescind")
+      Candidate Reneges = CALCULATE(COUNTROWS(fct_application), fct_application[post_acceptance_outcome] = "candidate_renege")
+      Post-Acceptance Loss Rate = DIVIDE([Post-Acceptance Losses], [Accepted Offer Events])
+    validation_rules:
+      - SUPP-06 = EXEC-02 + SUPP-07 in every context.
+      - Employer Rescinds + Candidate Reneges = Post-Acceptance Losses; the two are mutually exclusive per application.
+      - Every row counted here still has offer_accepted_date populated and still counts in EXEC-05 and EXEC-11.
+      - Counts only losses AFTER acceptance. A declined offer or a pre-acceptance rescind is not a post-acceptance loss.
+    notes: >
+      Splitting employer rescind from candidate renege matters operationally: a rescind is a
+      demand-side decision (budget, reorg, hiring freeze), a renege is a candidate-market
+      signal (competing offer, counter-offer, slow start date). They call for different
+      actions even though both reopen the seat.
+
+  - metric_id: SUPP-08
+    name: Started Hires
+    business_question: How many of the filled seats have turned into people who actually started?
+    description: >
+      Count of active fills where the person actually started employment on or before the
+      as-of date. The difference between EXEC-02 and this metric is accepted offers still
+      waiting for their start date - normal pipeline, not a loss.
+    concept: hire
+    formula: SUM(started_positions)
+    numerator: SUM(started_positions)
+    denominator: null
+    aggregation: sum
+    date_basis: target_hire_date (THD) for delivery context; employee start cohort for quality context
+    population: Non-cancelled requisitions with THD in the selected period.
+    filters: [thd_period, business_unit, job_family, job_level]
+    exclusions: [accepted offers not yet started, post-acceptance rescinds and reneges, cancelled requisitions]
+    target: null
+    format: integer
+    source_dataset: mart_exec_demand (governed source fct_requisition.started_positions)
+    required_columns: [started_positions]
+    power_bi_measure_guidance: |
+      Started Hires = SUM(mart_exec_demand[started_positions])
+      Pending Starts = [Positions Filled] - [Started Hires]
+      Start Conversion = DIVIDE([Started Hires], [Accepted Offer Events])
+    validation_rules:
+      - Equals COUNT of fct_application rows with is_started = true, and equals COUNT of fct_hire_outcome rows, in the same context.
+      - Never exceeds EXEC-02 (Positions Filled).
+      - Only this measure and the quality metrics may be labelled "hires" on the page.
+    notes: >
+      This is the only delivery-side metric that is on the hire (employment) definition, so
+      it is the correct bridge to the quality section. Labelling EXEC-02 as "hires" is the
+      error this contract version exists to prevent.

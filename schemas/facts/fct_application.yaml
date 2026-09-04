@@ -1,11 +1,16 @@
 dataset: fct_application
 layer: fact
-version: 1.0
+version: 1.1
 purpose: >
-  Application-grain fact describing the current (as-of) state of every candidate
-  application, including offer outcome fields. It supports the active pipeline
-  snapshot, positions-filled reconciliation, Time to Fill (accepted offers) and
-  the stage-to-acceptance probability of each active candidate used by the forecast.
+  Application-grain fact describing every candidate application. It carries two
+  clearly separated concepts: the CURRENT state of the application
+  (application_status_current) and the IMMUTABLE offer-acceptance event
+  (is_offer_accepted_event, offer_accepted_date). Post-acceptance outcomes
+  (employer rescind, candidate renege, actual employee start) are modelled as
+  their own dated events so history is never rewritten. The fact supports the
+  active pipeline snapshot, active-fill reconciliation, Time to Fill (accepted
+  offers), historical offer-stage conversion and the stage-to-acceptance
+  probability of each active candidate used by the forecast.
   Offer data is integrated here rather than in a separate offer fact.
 
 grain: One row per application (one candidate applying to one requisition), state as of 2026-05-31.
@@ -17,8 +22,21 @@ unique_keys:
 
 source: >
   Applicant tracking system application and offer records, restricted to events on
-  or before as_of_date. Requisition attributes (THD, segment keys, approval date)
-  are denormalised from fct_requisition. Yield columns come from mart_stage_yield.
+  or before as_of_date. Employee start dates come from the HR system. Requisition
+  attributes (THD, segment keys, approval date) are denormalised from fct_requisition.
+  Yield columns come from mart_stage_yield.
+
+semantics:
+  offer_accepted: >
+    A historical Talent Acquisition fill event. Once a candidate accepted an offer
+    on or before the as-of date, is_offer_accepted_event and offer_accepted_date are
+    permanent. A later employer rescind or candidate renege NEVER clears them.
+  active_fill: >
+    An accepted offer that has not subsequently been rescinded or reneged. This is
+    the current-state concept behind Fill Rate and filled positions.
+  hire: >
+    A candidate who actually started employment (is_started = true). Only hires are
+    used for hiring-quality analysis (fct_hire_outcome, 60-Day Early Attrition).
 
 columns:
   # keys
@@ -59,21 +77,31 @@ columns:
   - name: current_recruiting_stage_key
     type: integer
     nullable: false
-    description: Last stage the application entered (dim_recruiting_stage). For hired applications this is offer.
-  # status
-  - name: application_status
+    description: Last stage the application entered (dim_recruiting_stage). For any application that reached acceptance this is offer, regardless of what happened afterwards.
+
+  # ---------------------------------------------------------------- current state
+  - name: application_status_current
     type: string
     nullable: false
-    description: As-of status. active = still in process on an open requisition.
-    accepted_values: [active, hired, rejected, withdrawn, offer_declined, offer_rescinded]
+    description: >
+      Current (as-of) state of the application. This column is mutable: it moves on
+      as the candidate's situation changes. It must never be used to define whether
+      an offer was accepted - use is_offer_accepted_event for that.
+      active = still in process on an open requisition.
+      offer_accepted = accepted, has not started yet, not rescinded, not reneged.
+      started = the person actually started employment.
+      offer_declined = the offer was never accepted.
+      offer_rescinded = the employer withdrew the offer AFTER acceptance.
+      candidate_renege = the candidate withdrew AFTER acceptance.
+      withdrawn / rejected = left the process BEFORE any offer was accepted.
+    accepted_values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_rescinded, candidate_renege]
+    notes: >
+      Replaces the previous application_status. The value 'hired' has been removed
+      on purpose: it conflated the TA fill event with the actual employee start.
   - name: is_active_pipeline
     type: boolean
     nullable: false
-    description: application_status = active. Only these rows count in Funnel Volume by Stage and in the forecast.
-  - name: is_offer_accepted
-    type: boolean
-    nullable: false
-    description: application_status = hired (offer accepted on or before as_of_date).
+    description: application_status_current = active. Only these rows count in Funnel Volume by Stage and in the forecast.
   - name: has_final_outcome
     type: boolean
     nullable: false
@@ -81,8 +109,75 @@ columns:
   - name: disposition_reason
     type: string
     nullable: true
-    description: Reason for rejection or withdrawal where available. Null for active and hired.
-  # dates (all <= as_of_date)
+    description: Reason for a pre-acceptance rejection or withdrawal where available. Null for active rows and for any row with an accepted-offer event (post-acceptance loss is described by post_acceptance_outcome).
+
+  # ---------------------------------------------------------------- offer acceptance event (immutable)
+  - name: is_offer_accepted_event
+    type: boolean
+    nullable: false
+    description: >
+      TRUE when the candidate accepted an offer on or before as_of_date. Immutable
+      historical fact. Stays TRUE after an employer rescind or a candidate renege.
+      Never derived from application_status_current.
+    derivation: offer_accepted_date IS NOT NULL
+  - name: offer_accepted_date
+    type: date
+    nullable: true
+    description: >
+      Date the candidate accepted the offer. Populated for every accepted offer and
+      PRESERVED even if the offer is later rescinded or the candidate reneges.
+      Defines the historical TA fill event and the end point of Time to Fill.
+  - name: is_active_fill
+    type: boolean
+    nullable: false
+    description: >
+      Current-state fill: an accepted offer that has not subsequently been rescinded
+      or reneged. This is the flag that reconciles to fct_requisition.filled_positions
+      and drives Fill Rate (EXEC-01/EXEC-02).
+    derivation: is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege
+
+  # ---------------------------------------------------------------- post-acceptance outcome
+  - name: post_acceptance_outcome
+    type: string
+    nullable: true
+    description: >
+      What happened after the offer was accepted. Null when there is no
+      accepted-offer event (nothing to describe).
+      pending_start = accepted and still expected to start, nothing lost.
+      started = the person actually started employment.
+      candidate_renege = the candidate withdrew after accepting.
+      employer_rescind = the employer withdrew the offer after acceptance.
+    accepted_values: [pending_start, started, candidate_renege, employer_rescind, null]
+  - name: is_offer_rescinded
+    type: boolean
+    nullable: false
+    description: The employer withdrew the offer AFTER the candidate accepted it. Does not clear the acceptance event.
+  - name: offer_rescinded_date
+    type: date
+    nullable: true
+    description: Date of the post-acceptance employer rescind. Populated only when is_offer_rescinded.
+  - name: is_candidate_renege
+    type: boolean
+    nullable: false
+    description: The candidate withdrew AFTER accepting the offer (renege / post-acceptance withdrawal). Does not clear the acceptance event.
+  - name: candidate_renege_date
+    type: date
+    nullable: true
+    description: Date of the post-acceptance candidate withdrawal. Populated only when is_candidate_renege.
+  - name: is_started
+    type: boolean
+    nullable: false
+    description: >
+      The candidate actually started employment on or before as_of_date. This is the
+      only flag that means "hire" for quality analysis; fct_hire_outcome holds exactly
+      these rows.
+    derivation: employee_start_date IS NOT NULL
+  - name: employee_start_date
+    type: date
+    nullable: true
+    description: Actual first day of employment from the HR system. Populated only when is_started. Null for accepted offers with a future or lost start.
+
+  # ---------------------------------------------------------------- dates (all actual dates <= as_of_date)
   - name: application_date
     type: date
     nullable: false
@@ -97,19 +192,14 @@ columns:
   - name: offer_extended_date
     type: date
     nullable: true
-  - name: offer_accepted_date
-    type: date
-    nullable: true
-    description: Populated only when is_offer_accepted. Defines the filled event.
   - name: offer_declined_date
     type: date
     nullable: true
-  - name: offer_rescinded_date
-    type: date
-    nullable: true
+    description: Date the candidate declined an offer that was never accepted. Mutually exclusive with offer_accepted_date.
   - name: withdrawal_date
     type: date
     nullable: true
+    description: Pre-acceptance candidate withdrawal date. A post-acceptance withdrawal is a renege and uses candidate_renege_date instead.
   - name: requisition_approval_date
     type: date
     nullable: false
@@ -117,12 +207,17 @@ columns:
   - name: time_to_fill_days
     type: integer
     nullable: true
-    description: offer_accepted_date - requisition_approval_date. Populated only when is_offer_accepted. Source of Median Time to Fill (EXEC-05).
-  # forecast inputs (active only)
+    description: >
+      offer_accepted_date - requisition_approval_date. Populated for EVERY accepted-offer
+      event, including offers later rescinded or reneged, because Time to Fill measures
+      the historical recruiting cycle that TA actually completed. Source of Median Time
+      to Fill (EXEC-05).
+
+  # ---------------------------------------------------------------- forecast inputs (active only)
   - name: stage_to_acceptance_yield
     type: decimal(6,4)
     nullable: true
-    description: Historical probability of reaching accepted offer from current stage, looked up in mart_stage_yield by segment + stage with fallback. Populated only when is_active_pipeline.
+    description: Historical probability of reaching an active fill from the current stage, looked up in mart_stage_yield by segment + stage with fallback. Populated only when is_active_pipeline.
   - name: yield_segment_level
     type: string
     nullable: true
@@ -137,13 +232,18 @@ relationships:
   - {to: dim_recruiting_stage, columns: {current_recruiting_stage_key: recruiting_stage_key}, cardinality: many_to_one, active: true}
   - {to: fct_requisition, columns: {requisition_key: requisition_key}, cardinality: many_to_one, active: false, notes: Logical only; not modelled in Power BI. Segment and THD keys are inherited instead.}
   - {to: fct_application_stage_event, columns: {application_key: application_key}, cardinality: one_to_many, active: false, notes: Logical only; not modelled in Power BI.}
-  - {to: fct_hire_outcome, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only; a started hire references its application.}
+  - {to: fct_hire_outcome, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only; a started hire references its application. Only rows with is_started = true have a match.}
 
 business_rules:
+  - Offer acceptance is an immutable historical event. Once offer_accepted_date is set it is never cleared, overwritten or nulled by a later rescind, renege or requisition change.
+  - Current status and historical event are separate columns. is_offer_accepted_event is derived from offer_accepted_date, never from application_status_current.
+  - An application can be in at most one post-acceptance outcome at a time; is_offer_rescinded and is_candidate_renege are mutually exclusive.
+  - A rescind or a withdrawal BEFORE acceptance is not a post-acceptance event. It uses offer_declined_date (offer never accepted) or withdrawal_date / disposition_reason, and post_acceptance_outcome stays null.
   - Active applications must belong to requisitions where fct_requisition.is_open = true. Closing or cancelling a requisition dispositions its active candidates (withdrawn/rejected) in the source or the transformation flags the row.
-  - Exactly one current stage per application at the as-of date.
-  - Positions Filled reconciles to accepted offers: COUNT(is_offer_accepted) per requisition = fct_requisition.filled_positions.
-  - Time to Fill uses accepted offers only and is never negative.
+  - Exactly one current stage per application at the as-of date. Reaching acceptance does not move the application out of the offer stage.
+  - Active fills reconcile to positions filled - COUNT(is_active_fill) per requisition = fct_requisition.filled_positions. Accepted-offer events reconcile to fct_requisition.accepted_offer_events.
+  - Time to Fill uses every accepted-offer event, keeps offers later rescinded or reneged in the population, and is never negative.
+  - Only rows with is_started = true are hires. Accepted offers awaiting a start date are not hires and are not in fct_hire_outcome.
   - Active candidates are neither successes nor failures for conversion; they are excluded from historical conversion and yield training (has_final_outcome = false).
   - No position quantity is stored here. Never join fct_requisition quantities onto this grain in Power BI.
 
@@ -151,23 +251,56 @@ data_quality_tests:
   - {test: unique, columns: [application_key]}
   - {test: unique, columns: [application_id]}
   - {test: unique, columns: [candidate_id, requisition_id]}
-  - {test: not_null, columns: [application_key, candidate_id, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key, application_status, application_date, current_stage_entry_date, requisition_approval_date]}
-  - {test: accepted_values, column: application_status, values: [active, hired, rejected, withdrawn, offer_declined, offer_rescinded]}
-  - {test: expression, expression: "is_active_pipeline = (application_status = 'active')"}
-  - {test: expression, expression: "is_offer_accepted = (application_status = 'hired')"}
+  - {test: not_null, columns: [application_key, candidate_id, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key, application_status_current, is_offer_accepted_event, is_active_fill, is_offer_rescinded, is_candidate_renege, is_started, application_date, current_stage_entry_date, requisition_approval_date]}
+  - {test: accepted_values, column: application_status_current, values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_rescinded, candidate_renege]}
+  - {test: accepted_values, column: post_acceptance_outcome, values: [pending_start, started, candidate_renege, employer_rescind, null]}
+  - {test: expression, expression: "is_active_pipeline = (application_status_current = 'active')"}
   - {test: expression, expression: "has_final_outcome = NOT is_active_pipeline"}
+  # --- the acceptance event is immutable and independent of current status
+  - {test: expression, expression: "is_offer_accepted_event = (offer_accepted_date IS NOT NULL)", severity: error}
+  - {test: expression, expression: "is_offer_accepted_event IS NOT derived from application_status_current; a row with application_status_current IN ('offer_rescinded','candidate_renege') still has is_offer_accepted_event = true AND offer_accepted_date IS NOT NULL", severity: error}
+  - {test: expression, expression: "application_status_current IN ('offer_accepted','started','offer_rescinded','candidate_renege') implies is_offer_accepted_event = true"}
+  - {test: expression, expression: "application_status_current IN ('active','rejected','withdrawn','offer_declined') implies is_offer_accepted_event = false AND offer_accepted_date IS NULL"}
+  - {test: expression, expression: "offer_accepted_date IS NOT NULL AND offer_declined_date IS NOT NULL never occur on the same row"}
+  # --- current fill state
+  - {test: expression, expression: "is_active_fill = (is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege)", severity: error}
+  - {test: expression, expression: "NOT (is_offer_rescinded AND is_candidate_renege)", severity: error}
+  - {test: expression, expression: "is_offer_rescinded = (offer_rescinded_date IS NOT NULL) AND is_candidate_renege = (candidate_renege_date IS NOT NULL)"}
+  - {test: expression, expression: "(is_offer_rescinded OR is_candidate_renege) implies is_offer_accepted_event = true", severity: error}
+  # --- post-acceptance outcome
+  - {test: expression, expression: "is_offer_accepted_event = (post_acceptance_outcome IS NOT NULL)"}
+  - {test: expression, expression: "post_acceptance_outcome = 'started' implies is_started = true AND is_active_fill = true"}
+  - {test: expression, expression: "post_acceptance_outcome = 'pending_start' implies is_started = false AND is_active_fill = true AND employee_start_date IS NULL"}
+  - {test: expression, expression: "post_acceptance_outcome = 'employer_rescind' implies is_offer_rescinded = true AND is_active_fill = false"}
+  - {test: expression, expression: "post_acceptance_outcome = 'candidate_renege' implies is_candidate_renege = true AND is_active_fill = false"}
+  - {test: expression, expression: "post_acceptance_outcome = 'started' implies application_status_current = 'started'"}
+  # --- starts
+  - {test: expression, expression: "is_started = (employee_start_date IS NOT NULL)"}
+  - {test: expression, expression: "is_started implies is_offer_accepted_event = true AND employee_start_date >= offer_accepted_date"}
+  - {test: expression, expression: "is_started implies NOT is_offer_rescinded AND NOT is_candidate_renege", notes: A post-acceptance loss happens before the start; a person who started and then left is a termination in fct_hire_outcome, not a renege.}
+  # --- dates and durations
   - {test: expression, expression: "all populated actual dates <= as_of_date"}
   - {test: expression, expression: "application_date >= requisition_approval_date"}
-  - {test: expression, expression: "offer_accepted_date >= offer_extended_date >= application_date", filter: is_offer_accepted}
-  - {test: expression, expression: "is_offer_accepted implies offer_accepted_date IS NOT NULL AND time_to_fill_days = DATEDIFF(requisition_approval_date, offer_accepted_date)"}
-  - {test: expression, expression: "NOT is_offer_accepted implies offer_accepted_date IS NULL AND time_to_fill_days IS NULL"}
+  - {test: expression, expression: "offer_accepted_date >= offer_extended_date >= application_date", filter: is_offer_accepted_event}
+  - {test: expression, expression: "offer_rescinded_date >= offer_accepted_date", filter: is_offer_rescinded}
+  - {test: expression, expression: "candidate_renege_date >= offer_accepted_date", filter: is_candidate_renege}
+  - {test: expression, expression: "is_offer_accepted_event implies time_to_fill_days = DATEDIFF(requisition_approval_date, offer_accepted_date)", severity: error, notes: Holds for rescinded and reneged offers too; Time to Fill is never removed after the fact.}
+  - {test: expression, expression: "NOT is_offer_accepted_event implies offer_accepted_date IS NULL AND time_to_fill_days IS NULL AND post_acceptance_outcome IS NULL AND employee_start_date IS NULL"}
   - {test: accepted_range, columns: [time_to_fill_days], min: 0}
-  - {test: expression, expression: "application_status = 'offer_declined' implies offer_declined_date IS NOT NULL"}
-  - {test: expression, expression: "application_status = 'offer_rescinded' implies offer_rescinded_date IS NOT NULL"}
-  - {test: expression, expression: "application_status = 'withdrawn' implies withdrawal_date IS NOT NULL"}
+  - {test: expression, expression: "application_status_current = 'offer_declined' implies offer_declined_date IS NOT NULL"}
+  - {test: expression, expression: "application_status_current = 'offer_rescinded' implies offer_rescinded_date IS NOT NULL"}
+  - {test: expression, expression: "application_status_current = 'candidate_renege' implies candidate_renege_date IS NOT NULL"}
+  - {test: expression, expression: "application_status_current = 'withdrawn' implies withdrawal_date IS NOT NULL AND is_offer_accepted_event = false"}
+  - {test: expression, expression: "is_offer_accepted_event implies disposition_reason IS NULL"}
+  # --- forecast inputs
   - {test: expression, expression: "is_active_pipeline implies active_stage_age_days = DATEDIFF(current_stage_entry_date, as_of_date) AND stage_to_acceptance_yield BETWEEN 0 AND 1 AND yield_segment_level IS NOT NULL"}
   - {test: expression, expression: "NOT is_active_pipeline implies active_stage_age_days IS NULL AND stage_to_acceptance_yield IS NULL"}
+  # --- cross-dataset
   - {test: reconciliation, expression: "is_active_pipeline implies fct_requisition.is_open = true for requisition_key", severity: error}
+  - {test: reconciliation, expression: "COUNT(is_active_fill) per requisition_key = fct_requisition.filled_positions", severity: error}
+  - {test: reconciliation, expression: "COUNT(is_offer_accepted_event) per requisition_key = fct_requisition.accepted_offer_events", severity: error}
+  - {test: reconciliation, expression: "COUNT(is_offer_rescinded OR is_candidate_renege) per requisition_key = fct_requisition.lost_after_acceptance_positions", severity: error}
+  - {test: reconciliation, expression: "COUNT(is_started) = COUNT(fct_hire_outcome rows)", severity: error}
   - {test: reconciliation, expression: "thd_date_key, business_unit_key, job_family_key, job_level_key, requisition_approval_date equal the values on fct_requisition for requisition_key"}
   - {test: reconciliation, expression: "current_recruiting_stage_key = stage of the fct_application_stage_event row with is_current_stage = true"}
   - {test: referential_integrity, description: All dimension keys exist; requisition_key exists in fct_requisition.}
@@ -177,12 +310,20 @@ power_bi:
   summarization_off: [time_to_fill_days, active_stage_age_days, stage_to_acceptance_yield]
   measures:
     - name: Median Time to Fill
-      dax: MEDIAN(fct_application[time_to_fill_days])   -- blanks (non-accepted rows) are ignored
+      dax: MEDIAN(fct_application[time_to_fill_days])   -- blanks (no acceptance event) are ignored; rescinded and reneged accepted offers stay in
     - name: Active Candidates
       dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_active_pipeline] = TRUE)
-    - name: Accepted Offers
-      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_offer_accepted] = TRUE)
+    - name: Accepted Offer Events
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_offer_accepted_event] = TRUE)
+    - name: Active Fills
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_active_fill] = TRUE)
+    - name: Post-Acceptance Losses
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_offer_accepted_event] = TRUE, fct_application[is_active_fill] = FALSE)
+    - name: Started Hires
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_started] = TRUE)
   notes: >
     Because THD and segment keys are inherited, the same slicers filter this fact and
-    fct_requisition without a fact-to-fact relationship. Medians must always be computed
+    fct_requisition without a fact-to-fact relationship. Use [Accepted Offer Events] for
+    historical TA delivery (Time to Fill, offer-stage conversion) and [Active Fills] for
+    current fill state (Fill Rate, filled positions). Medians must always be computed
     here (or in fct_hire_outcome for cohort views), never by averaging mart medians.

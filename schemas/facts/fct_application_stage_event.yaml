@@ -1,12 +1,16 @@
 dataset: fct_application_stage_event
 layer: fact
-version: 1.0
+version: 1.1
 purpose: >
   Stage-movement fact: one row each time an application enters a recruiting
   stage. It is the source of historical stage-to-stage conversion, completed
   days in stage (median), active stage age, and the stage-entry populations used
   to train stage-to-acceptance yield. Completed intervals and open intervals are
   explicitly separated so in-process candidates are never counted as failures.
+  This fact is purely historical: a stage exit that happened is never rewritten by
+  something that happened later. In particular, the offer stage is exited
+  successfully when the candidate accepted the offer, and a later employer rescind
+  or candidate renege does not turn that exit into a failed conversion.
 
 grain: One row per application per stage entry, ordered by stage_sequence_number.
 
@@ -77,13 +81,24 @@ columns:
     type: boolean
     nullable: true
     description: >
-      For completed rows: true when the application moved to dim_recruiting_stage.next_stage_code
-      (or, for the offer stage, accepted the offer); false when it left the process from this stage.
+      For completed rows: true when the application moved to dim_recruiting_stage.next_stage_code;
+      false when it left the process from this stage.
+      For the OFFER stage the successful exit is the offer-acceptance event
+      (fct_application.is_offer_accepted_event = true), not the current application status
+      and not whether the person eventually started. An offer accepted and later rescinded
+      or reneged keeps advanced_to_next_stage = true, because the conversion genuinely
+      happened at that point in history.
       Null while not completed. Source of Stage-to-Stage Conversion (EXEC-11).
   - name: exit_reason
     type: string
     nullable: true
-    description: Why the application left the process from this stage. Null when advanced or not completed.
+    description: >
+      Why the application left the process from this stage WITHOUT advancing. Null when
+      advanced or not completed. These are all pre-acceptance losses: offer_rescinded here
+      means an offer that was extended and pulled back BEFORE the candidate accepted it.
+      A post-acceptance employer rescind or candidate renege is not a stage exit reason - it
+      is recorded on fct_application (is_offer_rescinded / is_candidate_renege,
+      post_acceptance_outcome) and leaves this column null.
     accepted_values: [rejected, withdrawn, offer_declined, offer_rescinded, null]
   - name: sla_days
     type: integer
@@ -104,10 +119,12 @@ relationships:
 
 business_rules:
   - Stage Conversion for stage S = SUM(advanced_to_next_stage) / COUNT(is_completed) over rows in S. Rows with is_completed = false are excluded from both numerator and denominator.
+  - Offer-stage conversion counts the accepted-offer EVENT. An accepted offer stays a successful conversion even if the offer is later rescinded, the candidate reneges, or the person never starts. Historical conversion measures what the recruiting process achieved; current fill status is a separate concept on fct_requisition.
+  - Post-acceptance events (employer rescind, candidate renege, employee start) create no rows here and change no existing row. They are application-level state, not stage movement.
   - Days in Stage is only defined for completed rows. Active stage age is a separate, operational measure.
   - Each application has exactly one row with is_current_stage = true, and at most one row with stage_exit_date null (only active applications).
   - Stage order normally increases with stage_sequence_number. A return to an earlier stage is allowed only when the process genuinely permits it and must not create duplicate (application, stage, entry_date) rows.
-  - Every completed application (has_final_outcome) has its final stage completed; a hired application's offer row is completed with advanced_to_next_stage = true.
+  - Every completed application (has_final_outcome) has its final stage completed; the offer row of an application with an accepted-offer event is completed with advanced_to_next_stage = true.
   - No stage_entry_date or stage_exit_date after as_of_date.
 
 data_quality_tests:
@@ -125,8 +142,10 @@ data_quality_tests:
   - {test: expression, expression: "exactly one row per application_key has is_current_stage = true"}
   - {test: reconciliation, expression: "rows with stage_exit_date IS NULL correspond 1:1 to fct_application rows with is_active_pipeline = true", severity: error}
   - {test: reconciliation, expression: "stage_entry_date of sequence n+1 = stage_exit_date of sequence n for the same application"}
-  - {test: reconciliation, expression: "advanced_to_next_stage = true on a row implies the next row's stage = dim_recruiting_stage.next_stage_code, or for offer the application is hired"}
-  - {test: reconciliation, expression: "COUNT(offer rows with advanced_to_next_stage = true) = COUNT(fct_application.is_offer_accepted)"}
+  - {test: reconciliation, expression: "advanced_to_next_stage = true on a row implies the next row's stage = dim_recruiting_stage.next_stage_code, or for the offer stage the application has fct_application.is_offer_accepted_event = true"}
+  - {test: reconciliation, expression: "COUNT(offer rows with advanced_to_next_stage = true) = COUNT(fct_application WHERE is_offer_accepted_event)", severity: error, notes: Compares against the immutable acceptance event, NOT is_active_fill and NOT is_started.}
+  - {test: expression, expression: "offer-stage rows of applications with is_offer_rescinded OR is_candidate_renege still have advanced_to_next_stage = true AND exit_reason IS NULL", severity: error, notes: Guards against a post-acceptance loss being back-written as a failed offer-stage conversion.}
+  - {test: expression, expression: "exit_reason = 'offer_rescinded' implies fct_application.is_offer_accepted_event = false", notes: Only a pre-acceptance rescind can be a stage exit reason.}
   - {test: referential_integrity, description: All dimension keys exist; application_key exists in fct_application.}
 
 power_bi:
@@ -138,9 +157,12 @@ power_bi:
     - name: Stage Advanced Count
       dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[advanced_to_next_stage] = TRUE)
     - name: Stage Conversion
-      dax: DIVIDE([Stage Advanced Count], [Stage Completed Count])
+      dax: DIVIDE([Stage Advanced Count], [Stage Completed Count])   -- offer stage = accepted-offer events / completed offer exits
     - name: Median Completed Days in Stage
       dax: MEDIAN(fct_application_stage_event[days_in_stage])   -- open rows are blank and ignored
   notes: >
     Governed source for stage conversion and median days in stage under any slicer combination.
     mart_exec_pipeline reconciles to these measures at its grain.
+    Offer-stage conversion is a historical success rate and will normally be higher than the
+    current fill picture, because it still counts accepted offers that were later lost. That
+    gap is intentional and is quantified by fct_requisition.lost_after_acceptance_positions.
