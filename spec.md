@@ -184,9 +184,29 @@ The model must therefore keep these separate, as distinct columns:
 
 - current application status
 - offer accepted event and offer accepted date
+- employer withdrawal (pre-acceptance)
 - employer rescind (post-acceptance)
+- candidate decline (pre-acceptance)
 - candidate renege / post-acceptance withdrawal
 - actual employee start
+
+**Reserved offer-loss vocabulary.** An offer can be lost by either side, before or after
+acceptance. These are four different events and each has one reserved word:
+
+| | Before acceptance | After acceptance |
+|---|---|---|
+| Employer ends it | `offer_withdrawn` | `offer_rescinded` |
+| Candidate ends it | `offer_declined` | `candidate_renege` |
+
+Before acceptance, no acceptance event ever existed: the offer accepted date is null, the
+seat was never filled, and nothing affects Fill Rate, Time to Fill or offer-stage
+conversion. After acceptance, the acceptance event stands and is preserved: the seat was
+filled and is restated as open, so Fill Rate falls while the historical measures are
+unchanged. Only the after-acceptance pair are post-acceptance losses.
+
+A candidate leaving with no offer on the table is `withdrawn`; one screened out by the
+employer is `rejected`. Neither is an offer-loss term. `rescind` must never be used for a
+pre-acceptance withdrawal.
 
 No metric may be defined from an application status value. Statuses change; dated events do
 not. In particular, `is_offer_accepted` must not be derived from `application_status = hired`.
@@ -383,8 +403,8 @@ The Executive Summary reports the **median**, not the average, because recruitin
 The original accepted offer **stays in the population even if the offer was later rescinded
 or the candidate reneged**. Time to Fill measures the recruiting cycle Talent Acquisition
 actually completed; removing it after the fact would rewrite history and bias the cycle
-time. Offers declined, or rescinded *before* acceptance, are excluded — there was no
-acceptance event.
+time. Offers the candidate declined (`offer_declined`), and offers the employer withdrew
+before acceptance (`offer_withdrawn`), are excluded — there was no acceptance event.
 
 **Default date basis for delivery reporting:** Target Hire Date of the associated requisition.
 
@@ -794,11 +814,17 @@ but the model must reliably and **separately** identify:
 
 - `is_offer_accepted_event` — the immutable historical acceptance event
 - `offer_accepted_date` — preserved even after a rescind or renege
+- `offer_withdrawn_date` — employer withdrawal **before** acceptance (no acceptance event)
 - `is_offer_rescinded` / `offer_rescinded_date` — employer rescind **after** acceptance
 - `is_candidate_renege` / `candidate_renege_date` — candidate withdrawal **after** acceptance
 - `is_started` / `employee_start_date` — the actual employment start
 - `post_acceptance_outcome` — one of `pending_start`, `started`, `candidate_renege`, `employer_rescind`
-- offer declined (an offer that was never accepted)
+- `offer_declined_date` — candidate decline **before** acceptance (no acceptance event)
+
+The four offer-loss terms are reserved as defined in section 5.4 and must not be
+interchanged: `offer_withdrawn` and `offer_declined` are pre-acceptance and never affect a
+fill or delivery metric; `offer_rescinded` and `candidate_renege` are post-acceptance and
+reduce current fill while leaving history intact.
 
 `is_offer_accepted_event` must be derived from `offer_accepted_date`, never from a status
 value. A post-acceptance rescind or renege must not clear `offer_accepted_date`, must not
@@ -1030,11 +1056,12 @@ requested_positions = filled_positions + openings_position
 2. `is_offer_accepted_event` must be derived from `offer_accepted_date`, never from `application_status_current` and never from the removed status value `hired`.
 3. `time_to_fill_days` must be preserved for accepted offers later rescinded or reneged.
 4. `is_offer_rescinded` and `is_candidate_renege` are mutually exclusive on one application, and both imply `is_offer_accepted_event = true`.
-5. A rescind or a withdrawal that happened **before** acceptance is not a post-acceptance event and leaves `post_acceptance_outcome` null.
-6. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
-7. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
-8. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
-9. One application must carry at most one governed accepted-offer event. Multiple source offer versions before final acceptance must be resolved upstream to a single acceptance date; an application arriving with more than one accepted offer version must be resolved or rejected, not loaded as-is.
+5. A loss that happened **before** acceptance is not a post-acceptance event and leaves `post_acceptance_outcome` null. Use `offer_withdrawn` (employer) or `offer_declined` (candidate); both imply no acceptance event and a null offer accepted date.
+6. `offer_rescinded` is reserved for an employer rescind **after** acceptance and always implies an acceptance event. The value `offer_rescinded` must not appear as a stage exit reason, because a post-acceptance loss is not a stage exit.
+7. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
+8. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
+9. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
+10. One application must carry at most one governed accepted-offer event. Multiple source offer versions before final acceptance must be resolved upstream to a single acceptance date; an application arriving with more than one accepted offer version must be resolved or rejected, not loaded as-is.
 
 ### Pipeline rules
 

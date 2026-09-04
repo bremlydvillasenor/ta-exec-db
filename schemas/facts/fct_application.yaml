@@ -40,6 +40,20 @@ semantics:
   hire: >
     A candidate who actually started employment (is_started = true). Only hires are
     used for hiring-quality analysis (fct_hire_outcome, 60-Day Early Attrition).
+  offer_loss_vocabulary: >
+    Four reserved terms, split by WHO ended it and WHETHER the offer had been accepted.
+    Each term means one thing only and is never used for the other side of the split:
+      offer_withdrawn  = the EMPLOYER withdrew the offer BEFORE acceptance.
+      offer_rescinded  = the EMPLOYER rescinded the offer AFTER acceptance.
+      offer_declined   = the CANDIDATE declined the offer BEFORE acceptance.
+      candidate_renege = the CANDIDATE withdrew AFTER acceptance.
+    Only the two AFTER-acceptance terms are post-acceptance losses: they reduce
+    is_active_fill while leaving the acceptance event intact. The two BEFORE-acceptance
+    terms mean no acceptance event ever existed, so offer_accepted_date is null and the
+    application never counted as a fill.
+    A pre-acceptance candidate exit from the process with no offer on the table is
+    'withdrawn' (candidate walked away) or 'rejected' (employer screened out); neither is
+    an offer-loss term.
 
 assumptions:
   one_acceptance_per_application:
@@ -130,11 +144,13 @@ columns:
       active = still in process on an open requisition.
       offer_accepted = accepted, has not started yet, not rescinded, not reneged.
       started = the person actually started employment.
-      offer_declined = the offer was never accepted.
-      offer_rescinded = the employer withdrew the offer AFTER acceptance.
-      candidate_renege = the candidate withdrew AFTER acceptance.
-      withdrawn / rejected = left the process BEFORE any offer was accepted.
-    accepted_values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_rescinded, candidate_renege]
+      offer_declined = the CANDIDATE declined the offer BEFORE acceptance.
+      offer_withdrawn = the EMPLOYER withdrew the offer BEFORE acceptance.
+      offer_rescinded = the EMPLOYER rescinded the offer AFTER acceptance.
+      candidate_renege = the CANDIDATE withdrew AFTER acceptance.
+      withdrawn / rejected = left the process with no offer on the table.
+      See semantics.offer_loss_vocabulary for the reserved four-term split.
+    accepted_values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_withdrawn, offer_rescinded, candidate_renege]
     notes: >
       Replaces the previous application_status. The value 'hired' has been removed
       on purpose: it conflated the TA fill event with the actual employee start.
@@ -191,7 +207,10 @@ columns:
   - name: is_offer_rescinded
     type: boolean
     nullable: false
-    description: The employer withdrew the offer AFTER the candidate accepted it. Does not clear the acceptance event.
+    description: >
+      The employer rescinded the offer AFTER the candidate accepted it. Does not clear
+      the acceptance event. An employer withdrawal BEFORE acceptance is offer_withdrawn
+      and never sets this flag.
   - name: offer_rescinded_date
     type: date
     nullable: true
@@ -235,7 +254,18 @@ columns:
   - name: offer_declined_date
     type: date
     nullable: true
-    description: Date the candidate declined an offer that was never accepted. Mutually exclusive with offer_accepted_date.
+    description: >
+      Date the CANDIDATE declined an offer BEFORE accepting it. Mutually exclusive with
+      offer_accepted_date - a declined offer was never accepted.
+  - name: offer_withdrawn_date
+    type: date
+    nullable: true
+    description: >
+      Date the EMPLOYER withdrew an offer BEFORE the candidate accepted it. Mutually
+      exclusive with offer_accepted_date. Distinct from offer_rescinded_date, which is
+      the employer pulling an offer the candidate had already accepted: a withdrawal
+      costs no fill because there was never an acceptance event, whereas a rescind
+      reopens a seat that was counted as filled.
   - name: withdrawal_date
     type: date
     nullable: true
@@ -285,7 +315,8 @@ business_rules:
   - Because acceptance is one-per-application, one accepted offer equals one seat. Every offer-based count in this contract is a COUNT of applications, which is what keeps accepted_offer_events, filled_positions and started_positions reconcilable at requisition grain.
   - Current status and historical event are separate columns. is_offer_accepted_event is derived from offer_accepted_date, never from application_status_current.
   - An application can be in at most one post-acceptance outcome at a time; is_offer_rescinded and is_candidate_renege are mutually exclusive.
-  - A rescind or a withdrawal BEFORE acceptance is not a post-acceptance event. It uses offer_declined_date (offer never accepted) or withdrawal_date / disposition_reason, and post_acceptance_outcome stays null.
+  - The four offer-loss terms are reserved and never interchanged - offer_withdrawn (employer, before acceptance), offer_rescinded (employer, after acceptance), offer_declined (candidate, before acceptance), candidate_renege (candidate, after acceptance). Only the two after-acceptance terms are post-acceptance losses.
+  - A loss BEFORE acceptance is not a post-acceptance event. It uses offer_declined_date or offer_withdrawn_date (no acceptance event ever existed), or withdrawal_date / disposition_reason where no offer was on the table, and post_acceptance_outcome stays null.
   - Active applications must belong to requisitions where fct_requisition.is_open = true. Closing or cancelling a requisition dispositions its active candidates (withdrawn/rejected) in the source or the transformation flags the row.
   - Exactly one current stage per application at the as-of date. Reaching acceptance does not move the application out of the offer stage.
   - Active fills reconcile to positions filled - COUNT(is_active_fill) per requisition = fct_requisition.filled_positions. Accepted-offer events reconcile to fct_requisition.accepted_offer_events.
@@ -299,7 +330,7 @@ data_quality_tests:
   - {test: unique, columns: [application_id]}
   - {test: unique, columns: [candidate_id, requisition_id]}
   - {test: not_null, columns: [application_key, candidate_id, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key, application_status_current, is_offer_accepted_event, is_active_fill, is_offer_rescinded, is_candidate_renege, is_started, application_date, current_stage_entry_date, requisition_approval_date]}
-  - {test: accepted_values, column: application_status_current, values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_rescinded, candidate_renege]}
+  - {test: accepted_values, column: application_status_current, values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_withdrawn, offer_rescinded, candidate_renege]}
   - {test: accepted_values, column: post_acceptance_outcome, values: [pending_start, started, candidate_renege, employer_rescind, null]}
   - {test: expression, expression: "is_active_pipeline = (application_status_current = 'active')"}
   - {test: expression, expression: "has_final_outcome = NOT is_active_pipeline"}
@@ -309,8 +340,9 @@ data_quality_tests:
   - {test: reconciliation, expression: "the upstream offer resolution produced exactly one accepted offer version per application; a source application with more than one accepted offer version is rejected or resolved, never loaded as-is", severity: error}
   - {test: expression, expression: "is_offer_accepted_event IS NOT derived from application_status_current; a row with application_status_current IN ('offer_rescinded','candidate_renege') still has is_offer_accepted_event = true AND offer_accepted_date IS NOT NULL", severity: error}
   - {test: expression, expression: "application_status_current IN ('offer_accepted','started','offer_rescinded','candidate_renege') implies is_offer_accepted_event = true"}
-  - {test: expression, expression: "application_status_current IN ('active','rejected','withdrawn','offer_declined') implies is_offer_accepted_event = false AND offer_accepted_date IS NULL"}
-  - {test: expression, expression: "offer_accepted_date IS NOT NULL AND offer_declined_date IS NOT NULL never occur on the same row"}
+  - {test: expression, expression: "application_status_current IN ('active','rejected','withdrawn','offer_declined','offer_withdrawn') implies is_offer_accepted_event = false AND offer_accepted_date IS NULL"}
+  - {test: expression, expression: "offer_accepted_date IS NOT NULL implies offer_declined_date IS NULL AND offer_withdrawn_date IS NULL", severity: error, notes: A pre-acceptance loss and an acceptance cannot both exist on one application.}
+  - {test: expression, expression: "offer_declined_date IS NULL OR offer_withdrawn_date IS NULL", notes: Candidate decline and employer pre-acceptance withdrawal are mutually exclusive.}
   # --- current fill state
   - {test: expression, expression: "is_active_fill = (is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege)", severity: error}
   - {test: expression, expression: "NOT (is_offer_rescinded AND is_candidate_renege)", severity: error}
@@ -334,10 +366,12 @@ data_quality_tests:
   - {test: expression, expression: "offer_rescinded_date >= offer_accepted_date", filter: is_offer_rescinded}
   - {test: expression, expression: "candidate_renege_date >= offer_accepted_date", filter: is_candidate_renege}
   - {test: expression, expression: "is_offer_accepted_event implies time_to_fill_days = DATEDIFF(requisition_approval_date, offer_accepted_date)", severity: error, notes: Holds for rescinded and reneged offers too; Time to Fill is never removed after the fact.}
-  - {test: expression, expression: "NOT is_offer_accepted_event implies offer_accepted_date IS NULL AND time_to_fill_days IS NULL AND post_acceptance_outcome IS NULL AND employee_start_date IS NULL"}
+  - {test: expression, expression: "NOT is_offer_accepted_event implies offer_accepted_date IS NULL AND time_to_fill_days IS NULL AND post_acceptance_outcome IS NULL AND employee_start_date IS NULL AND is_offer_rescinded = false AND is_candidate_renege = false"}
+  - {test: expression, expression: "offer_withdrawn_date >= offer_extended_date", filter: offer_withdrawn_date IS NOT NULL}
   - {test: accepted_range, columns: [time_to_fill_days], min: 0}
-  - {test: expression, expression: "application_status_current = 'offer_declined' implies offer_declined_date IS NOT NULL"}
-  - {test: expression, expression: "application_status_current = 'offer_rescinded' implies offer_rescinded_date IS NOT NULL"}
+  - {test: expression, expression: "application_status_current = 'offer_declined' implies offer_declined_date IS NOT NULL AND is_offer_accepted_event = false"}
+  - {test: expression, expression: "application_status_current = 'offer_withdrawn' implies offer_withdrawn_date IS NOT NULL AND is_offer_accepted_event = false AND is_offer_rescinded = false", notes: Employer withdrawal before acceptance - never a post-acceptance loss.}
+  - {test: expression, expression: "application_status_current = 'offer_rescinded' implies offer_rescinded_date IS NOT NULL AND is_offer_accepted_event = true", notes: Employer rescind after acceptance - always has an acceptance event behind it.}
   - {test: expression, expression: "application_status_current = 'candidate_renege' implies candidate_renege_date IS NOT NULL"}
   - {test: expression, expression: "application_status_current = 'withdrawn' implies withdrawal_date IS NOT NULL AND is_offer_accepted_event = false"}
   - {test: expression, expression: "is_offer_accepted_event implies disposition_reason IS NULL"}

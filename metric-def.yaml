@@ -26,6 +26,19 @@ contract:
         lost after acceptance the seat is restated as open.
       column: fct_application.is_active_fill / fct_requisition.filled_positions
       used_by: [EXEC-01 Fill Rate, EXEC-02 Positions Filled, FCST-01 to FCST-04]
+    offer_loss_terms:
+      meaning: Four reserved words for a lost offer, split by who ended it and whether it had been accepted.
+      rule: >
+        offer_withdrawn  = EMPLOYER withdrew the offer BEFORE acceptance.
+        offer_rescinded  = EMPLOYER rescinded the offer AFTER acceptance.
+        offer_declined   = CANDIDATE declined the offer BEFORE acceptance.
+        candidate_renege = CANDIDATE withdrew AFTER acceptance.
+        Only the two AFTER-acceptance terms are post-acceptance losses (SUPP-07): they
+        reduce current fill while leaving the acceptance event intact. The two
+        BEFORE-acceptance terms mean no acceptance event ever existed, so they never
+        touch Fill Rate, Time to Fill or offer-stage conversion.
+      column: fct_application.application_status_current, offer_withdrawn_date, offer_rescinded_date, offer_declined_date, candidate_renege_date
+      used_by: [EXEC-05 exclusions, EXEC-11 exclusions, SUPP-07]
     hire:
       meaning: Employment event.
       rule: >
@@ -184,7 +197,7 @@ metrics:
       with THD in the selected period. Includes offers later rescinded by the employer or
       reneged by the candidate.
     filters: [thd_period, business_unit, job_family, job_level]
-    exclusions: [offers declined before acceptance, offers rescinded BEFORE acceptance, pre-acceptance withdrawals, active candidates]
+    exclusions: [offers declined by the candidate before acceptance, offers withdrawn by the employer before acceptance, pre-acceptance candidate withdrawals, active candidates]
     target: null
     format: integer days
     source_dataset: fct_application.time_to_fill_days
@@ -690,7 +703,7 @@ metrics:
     date_basis: target_hire_date (THD)
     population: Non-cancelled requisitions with THD in the selected period.
     filters: [thd_period, business_unit, job_family, job_level]
-    exclusions: [cancelled requisitions, offers extended but not accepted, offers rescinded BEFORE acceptance]
+    exclusions: [cancelled requisitions, offers extended but not accepted, offers withdrawn by the employer before acceptance, offers declined by the candidate]
     target: null
     format: integer
     source_dataset: mart_exec_demand (governed source fct_requisition.accepted_offer_events)
@@ -722,7 +735,7 @@ metrics:
     date_basis: target_hire_date (THD)
     population: Non-cancelled requisitions with THD in the selected period.
     filters: [thd_period, business_unit, job_family, job_level]
-    exclusions: [cancelled requisitions, pre-acceptance declines, pre-acceptance rescinds, pre-acceptance withdrawals]
+    exclusions: [cancelled requisitions, offer_declined (candidate, pre-acceptance), offer_withdrawn (employer, pre-acceptance), pre-acceptance candidate withdrawals]
     target: null
     format: integer; optionally split employer rescind vs candidate renege
     source_dataset: mart_exec_demand (governed source fct_requisition.lost_after_acceptance_positions)
@@ -736,7 +749,7 @@ metrics:
       - SUPP-06 = EXEC-02 + SUPP-07 in every context.
       - Employer Rescinds + Candidate Reneges = Post-Acceptance Losses; the two are mutually exclusive per application.
       - Every row counted here still has offer_accepted_date populated and still counts in EXEC-05 and EXEC-11.
-      - Counts only losses AFTER acceptance. A declined offer or a pre-acceptance rescind is not a post-acceptance loss.
+      - Counts only losses AFTER acceptance, i.e. offer_rescinded and candidate_renege. The pre-acceptance terms offer_declined and offer_withdrawn are never counted here.
     notes: >
       Splitting employer rescind from candidate renege matters operationally: a rescind is a
       demand-side decision (budget, reorg, hiring freeze), a renege is a candidate-market

@@ -94,12 +94,18 @@ columns:
     nullable: true
     description: >
       Why the application left the process from this stage WITHOUT advancing. Null when
-      advanced or not completed. These are all pre-acceptance losses: offer_rescinded here
-      means an offer that was extended and pulled back BEFORE the candidate accepted it.
-      A post-acceptance employer rescind or candidate renege is not a stage exit reason - it
-      is recorded on fct_application (is_offer_rescinded / is_candidate_renege,
-      post_acceptance_outcome) and leaves this column null.
-    accepted_values: [rejected, withdrawn, offer_declined, offer_rescinded, null]
+      advanced or not completed. Every value here is a PRE-acceptance loss:
+        rejected        = the employer screened the candidate out.
+        withdrawn       = the candidate left the process with no offer on the table.
+        offer_declined  = the CANDIDATE declined an offer BEFORE accepting it.
+        offer_withdrawn = the EMPLOYER withdrew an offer BEFORE the candidate accepted it.
+      offer_withdrawn was named offer_rescinded before v1.1. It was renamed because
+      'rescind' is now reserved for the EMPLOYER pulling an offer the candidate had
+      ALREADY accepted - a post-acceptance loss, which is not a stage exit reason at all.
+      A post-acceptance employer rescind or candidate renege is recorded on fct_application
+      (is_offer_rescinded / is_candidate_renege, post_acceptance_outcome) and leaves this
+      column null, because the offer stage was exited successfully by the acceptance.
+    accepted_values: [rejected, withdrawn, offer_declined, offer_withdrawn, null]
   - name: sla_days
     type: integer
     nullable: false
@@ -121,6 +127,7 @@ business_rules:
   - Stage Conversion for stage S = SUM(advanced_to_next_stage) / COUNT(is_completed) over rows in S. Rows with is_completed = false are excluded from both numerator and denominator.
   - Offer-stage conversion counts the accepted-offer EVENT. An accepted offer stays a successful conversion even if the offer is later rescinded, the candidate reneges, or the person never starts. Historical conversion measures what the recruiting process achieved; current fill status is a separate concept on fct_requisition.
   - Post-acceptance events (employer rescind, candidate renege, employee start) create no rows here and change no existing row. They are application-level state, not stage movement.
+  - exit_reason carries only PRE-acceptance losses. Employer withdrawal before acceptance is offer_withdrawn; employer rescind after acceptance is offer_rescinded and belongs on fct_application, never here.
   - Days in Stage is only defined for completed rows. Active stage age is a separate, operational measure.
   - Each application has exactly one row with is_current_stage = true, and at most one row with stage_exit_date null (only active applications).
   - Stage order normally increases with stage_sequence_number. A return to an earlier stage is allowed only when the process genuinely permits it and must not create duplicate (application, stage, entry_date) rows.
@@ -145,7 +152,8 @@ data_quality_tests:
   - {test: reconciliation, expression: "advanced_to_next_stage = true on a row implies the next row's stage = dim_recruiting_stage.next_stage_code, or for the offer stage the application has fct_application.is_offer_accepted_event = true"}
   - {test: reconciliation, expression: "COUNT(offer rows with advanced_to_next_stage = true) = COUNT(fct_application WHERE is_offer_accepted_event)", severity: error, notes: Compares against the immutable acceptance event, NOT is_active_fill and NOT is_started.}
   - {test: expression, expression: "offer-stage rows of applications with is_offer_rescinded OR is_candidate_renege still have advanced_to_next_stage = true AND exit_reason IS NULL", severity: error, notes: Guards against a post-acceptance loss being back-written as a failed offer-stage conversion.}
-  - {test: expression, expression: "exit_reason = 'offer_rescinded' implies fct_application.is_offer_accepted_event = false", notes: Only a pre-acceptance rescind can be a stage exit reason.}
+  - {test: expression, expression: "exit_reason = 'offer_withdrawn' implies fct_application.is_offer_accepted_event = false AND fct_application.offer_withdrawn_date IS NOT NULL", notes: Only a pre-acceptance employer withdrawal can be a stage exit reason. The value 'offer_rescinded' must not appear in this column - a rescind is post-acceptance and never a stage exit.}
+  - {test: accepted_values, column: exit_reason, values: [rejected, withdrawn, offer_declined, offer_withdrawn, null], severity: error}
   - {test: referential_integrity, description: All dimension keys exist; application_key exists in fct_application.}
 
 power_bi:

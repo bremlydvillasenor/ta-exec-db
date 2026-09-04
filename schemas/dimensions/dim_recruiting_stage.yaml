@@ -62,7 +62,7 @@ relationships:
   - {to: mart_stage_yield, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: one_to_many, active: true}
 
 business_rules:
-  - Terminal and post-acceptance outcomes (offer accepted, started, rejected, withdrawn, offer declined, offer rescinded, candidate renege) are application states on fct_application, not stages. The last stage of any application that reached acceptance is offer, and it stays offer whether the person started, the employer rescinded, or the candidate reneged.
+  - Terminal and post-acceptance outcomes (offer accepted, started, rejected, withdrawn, offer declined, offer withdrawn, offer rescinded, candidate renege) are application states on fct_application, not stages. The last stage of any application that reached acceptance is offer, and it stays offer whether the person started, the employer rescinded, or the candidate reneged.
   - Conversion for a stage is measured against next_stage_code; for offer it is measured against offer acceptance.
   - Changing the flow means editing seed_rows here, not transformation code.
 
