@@ -1,6 +1,6 @@
 dataset: fct_hire_outcome
 layer: fact
-version: 1.0
+version: 1.1
 purpose: >
   Hire-grain fact for hiring quality. One row per person who actually started
   employment on or before the as-of date, with the start cohort, 60-day maturity,
@@ -8,7 +8,21 @@ purpose: >
   source of 60-Day Early Attrition (EXEC-13) and Speed vs 60-Day Early Attrition
   (EXEC-14), which use employee start month, not THD, as their date basis.
 
-grain: One row per started hire (one accepted offer that resulted in an employee start).
+terminology:
+  hire: >
+    In this contract a HIRE means a person who actually started employment
+    (fct_application.is_started = true). It is deliberately narrower than an
+    accepted offer. An accepted offer is a Talent Acquisition fill event; a hire is
+    an employment event. Only hires are valid for hiring-quality analysis, because
+    the 60-day observation window can only start on a real first day of employment.
+  not_a_hire: >
+    An accepted offer that has not started yet (post_acceptance_outcome =
+    pending_start), an offer rescinded by the employer after acceptance, and a
+    candidate who reneged after accepting are all NOT hires and have no row here.
+    They remain visible in fct_application and fct_requisition, so a post-acceptance
+    loss is never silently deleted - it is simply out of scope for quality.
+
+grain: One row per started hire (one accepted offer where the person actually started employment).
 
 primary_key: [hire_key]
 unique_keys:
@@ -17,9 +31,9 @@ unique_keys:
 
 source: >
   HR system worker/hire and termination events joined to the accepted-offer
-  application. Multiple worker-event or termination rows per hire are resolved to
-  one row (earliest termination after start) before this fact is built. Only starts
-  on or before as_of_date are included.
+  application (fct_application rows with is_started = true). Multiple worker-event or
+  termination rows per hire are resolved to one row (earliest termination after
+  start) before this fact is built. Only starts on or before as_of_date are included.
 
 columns:
   - name: hire_key
@@ -28,7 +42,7 @@ columns:
   - name: application_key
     type: integer
     nullable: false
-    description: The accepted-offer application this hire came from.
+    description: The application this hire came from. It always has is_offer_accepted_event = true AND is_started = true.
   - name: candidate_id
     type: string
     nullable: false
@@ -63,6 +77,7 @@ columns:
   - name: offer_accepted_date
     type: date
     nullable: false
+    description: Denormalised from fct_application. The historical acceptance event date, unchanged.
   - name: employee_start_date
     type: date
     nullable: false
@@ -105,12 +120,15 @@ relationships:
   - {to: fct_application, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only.}
 
 business_rules:
+  - A hire is an actual employee start, not an accepted offer. Membership is defined by fct_application.is_started = true; it is never defined by application status text or by is_offer_accepted_event alone.
   - A hire appears exactly once. Duplicate start or termination source rows must be resolved upstream.
   - The 60-day window begins at employee_start_date, so start month is the cohort basis; THD and offer month are not.
   - Hires whose start month is not fully matured are kept in the table (for reconciliation) but excluded from the KPI and trend through is_fully_matured_start_month.
   - is_60_day_early_attrition is true only for terminations from day 0 through day 60 inclusive.
-  - Hires that accepted an offer but have not started by the as-of date are not in this table.
-  - Only started hires can appear, so every row has is_offer_accepted = true on its application.
+  - Candidates who accepted an offer but have not started by the as-of date are not in this table. They are still active fills on fct_requisition and still count for Fill Rate and Time to Fill.
+  - Candidates whose accepted offer was rescinded by the employer, or who reneged after accepting, never appear here because they never started. Their accepted-offer event and offer_accepted_date remain intact on fct_application.
+  - Every row therefore has is_offer_accepted_event = true, is_active_fill = true and is_started = true on its application.
+  - A person who started and then left is a TERMINATION (termination_date), not a renege. Renege and rescind are strictly pre-start events.
 
 data_quality_tests:
   - {test: unique, columns: [hire_key]}
@@ -126,7 +144,9 @@ data_quality_tests:
   - {test: expression, expression: "is_fully_matured_start_month implies is_60_day_matured"}
   - {test: expression, expression: "cohort_month_key = yyyymm(employee_start_date)"}
   - {test: reconciliation, expression: "is_fully_matured_start_month equals dim_start_cohort.is_fully_matured_start_month for cohort_month_key"}
-  - {test: reconciliation, expression: "application exists in fct_application with is_offer_accepted = true and matching offer_accepted_date and segment keys"}
+  - {test: reconciliation, expression: "application exists in fct_application with is_offer_accepted_event = true AND is_started = true AND is_active_fill = true, and matching offer_accepted_date, employee_start_date and segment keys", severity: error}
+  - {test: reconciliation, expression: "COUNT(fct_hire_outcome rows) = COUNT(fct_application WHERE is_started) = SUM(fct_requisition.started_positions)", severity: error}
+  - {test: reconciliation, expression: "no row exists for an application with is_offer_rescinded = true OR is_candidate_renege = true", severity: error}
   - {test: referential_integrity, description: All dimension keys and application_key exist.}
 
 power_bi:
@@ -145,3 +165,7 @@ power_bi:
     No active relationship to dim_date, so the THD slicer cannot shorten the observation
     window. BU/JF/JL slicers still apply. Quality measures are weighted (SUM/SUM), never
     an average of monthly rates.
+    Row count here is always lower than accepted offer events and lower than or equal to
+    active fills, by design: accepted offers pending a start, plus rescinds and reneges,
+    have no employment record to assess. Label anything built on this table "hires" or
+    "started hires", never "fills".

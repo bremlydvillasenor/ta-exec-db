@@ -124,7 +124,9 @@ Examples of actual dates that must not be later than May 31, 2026:
 - stage event date
 - offer accepted date
 - offer declined date
-- candidate withdrawal date
+- offer rescinded date (post-acceptance employer rescind)
+- candidate renege date (post-acceptance candidate withdrawal)
+- candidate withdrawal date (pre-acceptance)
 - candidate start date
 - termination date
 
@@ -154,11 +156,76 @@ Target Offer Acceptance Date is the date by which an offer should be accepted fo
 
 TOAD is the date used to classify open-position risk.
 
-### 5.4 Filled position
+### 5.4 Offer acceptance, filled position, and hire
 
-A position is considered filled when a candidate has **accepted an offer on or before the reporting as-of date**.
+These are three different things and must not be defined from one another.
 
-Offer acceptance is used because it represents the end of the recruiting process controlled by Talent Acquisition.
+**Offer acceptance is an immutable historical event. Current fill status is a separate current-state concept.**
+
+**Offer Accepted** — a candidate accepted an offer on or before the reporting as-of date.
+This is a historical Talent Acquisition fill event and it is permanent. If the employer
+later rescinds the offer, or the candidate later reneges, the acceptance still happened:
+`offer_accepted_date` is preserved and is never cleared or overwritten.
+
+**Active Fill** — an accepted offer that has **not** subsequently been rescinded or
+reneged. This is the current-state concept. A position is considered filled, for Fill Rate
+and filled-position reporting, when it is held by an active fill. If an accepted offer is
+lost after acceptance and the seat re-opens, the seat is restated as open.
+
+**Hire** — a candidate who **actually started employment**. Narrower than an active fill:
+an accepted offer waiting for its start date is a fill, not yet a hire. Only actual starts
+are used for hiring-quality analysis.
+
+Offer acceptance is used as the TA delivery event because it represents the end of the
+recruiting process controlled by Talent Acquisition. Employee start is used for quality
+because the observation window can only begin on a real first day of employment.
+
+The model must therefore keep these separate, as distinct columns:
+
+- current application status
+- offer accepted event and offer accepted date
+- employer withdrawal (pre-acceptance)
+- employer rescind (post-acceptance)
+- candidate decline (pre-acceptance)
+- candidate renege / post-acceptance withdrawal
+- actual employee start
+
+**Reserved offer-loss vocabulary.** An offer can be lost by either side, before or after
+acceptance. These are four different events and each has one reserved word:
+
+| | Before acceptance | After acceptance |
+|---|---|---|
+| Employer ends it | `offer_withdrawn` | `offer_rescinded` |
+| Candidate ends it | `offer_declined` | `candidate_renege` |
+
+Before acceptance, no acceptance event ever existed: the offer accepted date is null, the
+seat was never filled, and nothing affects Fill Rate, Time to Fill or offer-stage
+conversion. After acceptance, the acceptance event stands and is preserved: the seat was
+filled and is restated as open, so Fill Rate falls while the historical measures are
+unchanged. Only the after-acceptance pair are post-acceptance losses.
+
+A candidate leaving with no offer on the table is `withdrawn`; one screened out by the
+employer is `rejected`. Neither is an offer-loss term. `rescind` must never be used for a
+pre-acceptance withdrawal.
+
+No metric may be defined from an application status value. Statuses change; dated events do
+not. In particular, `is_offer_accepted` must not be derived from `application_status = hired`.
+
+**Scope limit — one acceptance per application.** One application contributes at most one
+governed accepted-offer event. One accepted offer equals one seat, and every offer-based
+figure in this specification is a count of applications, which is what keeps accepted offer
+events, filled positions, and started positions reconcilable at requisition grain.
+
+Multiple offer versions before final acceptance — a revised salary, a moved start date, a
+re-issued offer letter — are offer *versions*, not separate acceptance events, and must be
+resolved upstream to the single governed acceptance date.
+
+A genuine re-offer cycle, where the same candidate accepts, is lost to a rescind or renege,
+and is later re-offered and accepts again for the same requisition, is out of scope for the
+current design; the source is expected to produce a new application for the second attempt.
+If multiple acceptance or re-offer cycles per application become a requirement, a separate
+offer-event fact must be introduced rather than adding further offer columns to the
+application fact.
 
 ### 5.5 Open position
 
@@ -169,6 +236,13 @@ For an open requisition:
 ```text
 requested_positions = filled_positions + openings_position
 ```
+
+where `filled_positions` counts **active fills**. When an accepted offer is rescinded or
+reneged and the seat re-opens, the seat moves from `filled_positions` to
+`openings_position`; `requested_positions` is unchanged and the identity still holds. If
+the business decides not to re-open the seat, it moves to `cancelled_positions` instead.
+A requisition returning from `filled` to `open` after a post-acceptance loss is a valid
+transition, not a data error.
 
 Total Open Positions is therefore:
 
@@ -222,7 +296,7 @@ The THD slicer must therefore **not** shorten or distort the 60-day quality obse
 
 ### EXEC-01 — Fill Rate
 
-**Business question:** Of the positions the business expects to fill in the selected demand period, how many have been filled?
+**Business question:** Of the positions the business expects to fill in the selected demand period, how many are filled right now?
 
 ```text
 Fill Rate = Positions Filled / Requested Positions
@@ -234,25 +308,49 @@ Fill Rate = Positions Filled / Requested Positions
 
 **Numerator:** Filled positions associated with the same requisitions and demand period.
 
-**Filled event:** accepted offer on or before the as-of date.
+**Filled event:** an **active fill** — an offer accepted on or before the as-of date that has
+not subsequently been rescinded or reneged.
 
 **Primary comparison:** configured Fill Rate target.
 
-Fill Rate is a position-based demand attainment measure, not the percentage of requisitions closed.
+Fill Rate is a position-based demand attainment measure, not the percentage of requisitions
+closed, and not a count of historical accepted offers.
+
+Fill Rate reports **current** state. If an accepted offer is later rescinded or reneged and
+the seat re-opens, Fill Rate falls. The historical accepted-offer count is reported
+separately and never falls, so the drop is explainable rather than mysterious. Show
+post-acceptance losses alongside Fill Rate whenever it moves for this reason.
 
 ---
 
-### EXEC-02 — Positions Filled
+### EXEC-02 — Positions Filled (Active Fills)
 
-**Business question:** How many required positions has TA successfully filled?
+**Business question:** How many required positions are filled right now?
 
 ```text
-Positions Filled = SUM(filled_positions)
+Positions Filled = SUM(filled_positions)      -- active fills
 ```
 
 **Date basis:** requisition Target Hire Date.
 
-Offers that were extended but not accepted do not count as fills.
+Offers that were extended but not accepted do not count as fills. Accepted offers that were
+later rescinded by the employer, or reneged by the candidate, are no longer active fills and
+do not count here either — their seats are restated as open.
+
+Two supporting counts must be available alongside this metric:
+
+- **Accepted Offer Events** — every accepted offer on or before the as-of date, including
+  those later lost. Historical, never decreases.
+- **Post-Acceptance Losses** — accepted offers lost to employer rescind or candidate renege,
+  reported separately for the two causes.
+
+```text
+Accepted Offer Events = Positions Filled + Post-Acceptance Losses
+```
+
+An accepted offer that has not started yet is still a fill. It becomes a **hire** only when
+the person starts; started hires are counted separately and are the only delivery figure
+that may be labelled "hires".
 
 ---
 
@@ -300,7 +398,13 @@ Time to Fill = Offer Accepted Date - Requisition Approval Date
 
 The Executive Summary reports the **median**, not the average, because recruiting cycle times often contain long-tail outliers.
 
-**Population:** accepted offers only.
+**Population:** every accepted-offer event, on or before the as-of date.
+
+The original accepted offer **stays in the population even if the offer was later rescinded
+or the candidate reneged**. Time to Fill measures the recruiting cycle Talent Acquisition
+actually completed; removing it after the fact would rewrite history and bias the cycle
+time. Offers the candidate declined (`offer_declined`), and offers the employer withdrew
+before acceptance (`offer_withdrawn`), are excluded — there was no acceptance event.
 
 **Default date basis for delivery reporting:** Target Hire Date of the associated requisition.
 
@@ -411,9 +515,21 @@ For completed historical stage movements:
 Stage Conversion = Candidates progressing to next stage / Candidates completing current stage
 ```
 
+For the Offer stage, the successful exit is the **offer-acceptance event**. An accepted
+offer remains a successful conversion even if the offer was later rescinded, the candidate
+reneged, or the person never started. Historical conversion describes what the recruiting
+process achieved at that point in time; current fill status is a separate concept reported
+by EXEC-01.
+
+Offer-stage conversion will therefore normally sit above the current fill picture. The
+difference is exactly the post-acceptance losses, and it is reported, not hidden.
+
 The exact stage mapping must be governed in configuration or YAML rather than embedded repeatedly in transformation code.
 
 Candidate records still actively in a stage must not be incorrectly treated as failures.
+
+Conversion outcomes must not be recalculated from current application status. They are
+derived from dated stage events and the offer-acceptance event.
 
 ---
 
@@ -522,12 +638,19 @@ Business Unit + Job Family + Job Level + Current Stage
 
 If a segment does not have enough historical observations to produce a stable rate, the model should use a documented fallback hierarchy to a broader segment rather than return an unstable or misleading conversion probability.
 
-### 7.3 Stage-to-acceptance yield
+### 7.3 Stage-to-active-fill yield
 
-For each active pipeline candidate, estimate the probability of eventually reaching accepted offer from the candidate's current stage using historical candidates from the appropriate segment.
+For each active pipeline candidate, estimate the probability of eventually reaching an
+**active fill** — an accepted offer that is not subsequently rescinded or reneged — from the
+candidate's current stage, using historical candidates from the appropriate segment.
+
+The training label is the active fill rather than the raw acceptance event, so that forecast
+filled positions stay on the same definition as actual filled positions and Forecast Fill
+Rate stays comparable with Fill Rate. An offer accepted and then lost trains as a failure
+here, even though it remains a successful historical offer-stage conversion in EXEC-11.
 
 ```text
-Expected Pipeline Fills = SUM(active candidate stage-to-acceptance probability)
+Expected Pipeline Fills = SUM(active candidate stage-to-active-fill probability)
 ```
 
 Expected fills must then be capped at the number of remaining open positions on the requisition.
@@ -538,9 +661,13 @@ A requisition with 3 open positions cannot contribute more than 3 forecast fills
 
 ```text
 Forecast Filled Positions =
-    Actual Filled Positions
-  + Expected Pipeline Fills
+    Actual Filled Positions        -- active fills
+  + Expected Pipeline Fills        -- expected active fills
 ```
+
+Both terms use the active-fill definition. A seat re-opened by a rescind or a renege returns
+to open positions, so the pipeline is given a fresh chance to fill it rather than the seat
+being counted as filled twice.
 
 ### 7.5 Forecast Fill Rate
 
@@ -635,7 +762,10 @@ Minimum fields required for Executive Summary logic:
 - target_hire_date
 - target_offer_acceptance_date
 - requested_positions
-- filled_positions
+- filled_positions (active fills: accepted and not subsequently rescinded or reneged)
+- accepted_offer_events (historical accepted offers, including those later lost)
+- lost_after_acceptance_positions (employer rescind + candidate renege)
+- started_positions (seats where the person actually started)
 - openings_position
 - business_unit_key
 - job_family_key
@@ -664,23 +794,61 @@ Important keys and attributes include:
 - candidate_key
 - requisition_key
 - recruiting_stage_key
-- current recruiting status
+- application_status_current (current state; never used to define the acceptance event)
 - application date
 - stage entry date
 - stage exit date
 - disposition / withdrawal reason where available
 
+The application fact must keep current state and historical events in separate columns. The
+status value `hired` must not be used, because it conflates the Talent Acquisition fill
+event with the actual employee start; use `offer_accepted` and `started` instead.
+
+The application fact assumes at most one governed accepted-offer event per application; see
+section 9.4.
+
 ### 9.4 Offer data
 
-Offer information may be stored in a separate fact or integrated into the application fact, but the model must reliably identify:
+Offer information may be stored in a separate fact or integrated into the application fact,
+but the model must reliably and **separately** identify:
 
-- offer accepted
-- offer declined
-- offer rescinded where applicable
-- candidate withdrawal / renege where applicable
-- offer accepted date
+- `is_offer_accepted_event` — the immutable historical acceptance event
+- `offer_accepted_date` — preserved even after a rescind or renege
+- `offer_withdrawn_date` — employer withdrawal **before** acceptance (no acceptance event)
+- `is_offer_rescinded` / `offer_rescinded_date` — employer rescind **after** acceptance
+- `is_candidate_renege` / `candidate_renege_date` — candidate withdrawal **after** acceptance
+- `is_started` / `employee_start_date` — the actual employment start
+- `post_acceptance_outcome` — one of `pending_start`, `started`, `candidate_renege`, `employer_rescind`
+- `offer_declined_date` — candidate decline **before** acceptance (no acceptance event)
 
-Accepted offers are required for positions filled, Time to Fill, conversion outcomes, and forecast training labels.
+The four offer-loss terms are reserved as defined in section 5.4 and must not be
+interchanged: `offer_withdrawn` and `offer_declined` are pre-acceptance and never affect a
+fill or delivery metric; `offer_rescinded` and `candidate_renege` are post-acceptance and
+reduce current fill while leaving history intact.
+
+`is_offer_accepted_event` must be derived from `offer_accepted_date`, never from a status
+value. A post-acceptance rescind or renege must not clear `offer_accepted_date`, must not
+clear `time_to_fill_days`, and must not change any historical conversion outcome.
+
+An **active fill** is then an accepted offer with no subsequent rescind or renege. Accepted
+offer events are required for Time to Fill and offer-stage conversion; active fills are
+required for positions filled, Fill Rate and forecast training labels; actual starts are
+required for hiring-quality analysis.
+
+**Cardinality assumption.** The columns above describe a single acceptance event, so one
+application must contribute at most one governed accepted-offer event. Where the source
+holds several offer versions for one application before final acceptance, the transformation
+must resolve them to one acceptance — normally the earliest acceptance date of the offer the
+candidate actually accepted — and the resolution rule must be documented where it is applied.
+A source application carrying more than one accepted offer version must be resolved or
+rejected, never loaded as-is.
+
+If future requirements need multiple acceptance or re-offer cycles for a single application,
+introduce a **separate offer-event fact** — one row per offer event, with an offer sequence
+number and its own accepted, rescinded and reneged dates — and keep the application fact at
+one row per application holding the resolved current state. Do not overload the application
+fact with a second set of offer columns or a repeated group; that would break the application
+grain and every count-based reconciliation in section 12.
 
 ### 9.5 Hire and termination data
 
@@ -688,7 +856,12 @@ The project must include the minimum employee outcome data required to calculate
 
 Suggested table: `fct_hire_outcome`
 
-**Preferred grain:** one row per started hire.
+**Preferred grain:** one row per started hire — a person who **actually started employment**.
+
+Accepted offers that never became a start (still pending, rescinded by the employer, or
+reneged by the candidate) have no row here. They remain fully visible in the application and
+requisition facts, so a post-acceptance loss is out of scope for quality analysis without
+being deleted from the data.
 
 Minimum fields:
 
@@ -728,7 +901,10 @@ THD month + Business Unit + Job Family + Job Level
 Suggested measures:
 
 - requested_positions
-- filled_positions
+- filled_positions (active fills)
+- accepted_offer_events
+- lost_after_acceptance_positions
+- started_positions
 - open_positions
 - fill_rate
 - median_time_to_fill
@@ -769,7 +945,7 @@ Suggested measures:
 
 - active_candidates
 - historical_stage_conversion
-- stage_to_acceptance_yield
+- stage_to_active_fill_yield
 - median_completed_days_in_stage
 - median_active_stage_age
 
@@ -858,6 +1034,10 @@ requested_positions = filled_positions + openings_position
 
 7. Cancelled requisitions must not contribute to active demand or open-position KPIs.
 8. TOAD must be sourced from the requisition field and not silently recomputed.
+9. `accepted_offer_events = filled_positions + lost_after_acceptance_positions`.
+10. `started_positions <= filled_positions <= accepted_offer_events`.
+11. `accepted_offer_events` must never decrease for a period that is already in the past.
+12. A requisition moving from `filled` back to `open` after a post-acceptance loss is a valid transition and must not be flagged as an error.
 
 ### Date rules
 
@@ -867,6 +1047,21 @@ requested_positions = filled_positions + openings_position
 4. Stage exit date must not precede stage entry date.
 5. Time to Fill must not be negative.
 6. Termination date must not precede employee start date.
+7. `offer_rescinded_date` and `candidate_renege_date` must not precede `offer_accepted_date`.
+8. `employee_start_date` must not precede `offer_accepted_date`.
+
+### Offer event rules
+
+1. `offer_accepted_date` is immutable. It **must be preserved** after an employer rescind or a candidate renege. Any rule that requires it to become null after a post-acceptance loss is a defect and must be removed.
+2. `is_offer_accepted_event` must be derived from `offer_accepted_date`, never from `application_status_current` and never from the removed status value `hired`.
+3. `time_to_fill_days` must be preserved for accepted offers later rescinded or reneged.
+4. `is_offer_rescinded` and `is_candidate_renege` are mutually exclusive on one application, and both imply `is_offer_accepted_event = true`.
+5. A loss that happened **before** acceptance is not a post-acceptance event and leaves `post_acceptance_outcome` null. Use `offer_withdrawn` (employer) or `offer_declined` (candidate); both imply no acceptance event and a null offer accepted date.
+6. `offer_rescinded` is reserved for an employer rescind **after** acceptance and always implies an acceptance event. The value `offer_rescinded` must not appear as a stage exit reason, because a post-acceptance loss is not a stage exit.
+7. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
+8. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
+9. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
+10. One application must carry at most one governed accepted-offer event. Multiple source offer versions before final acceptance must be resolved upstream to a single acceptance date; an application arriving with more than one accepted offer version must be resolved or rejected, not loaded as-is.
 
 ### Pipeline rules
 
@@ -874,6 +1069,7 @@ requested_positions = filled_positions + openings_position
 2. A candidate application should have one current stage at the reporting as-of date.
 3. Historical stage events must not create duplicate candidate-stage transitions unless the recruiting process genuinely allows a return to a prior stage.
 4. Candidates still in process must not automatically be treated as failed conversions.
+5. An accepted offer later lost must not be back-written as a failed offer-stage conversion.
 
 ### Risk rules
 
@@ -884,7 +1080,7 @@ requested_positions = filled_positions + openings_position
 
 ### Quality rules
 
-1. Every hire used in 60-Day Early Attrition must have a valid employee start date.
+1. Every hire used in 60-Day Early Attrition must have a valid employee start date. Only candidates who actually started are hires; accepted offers that never started are excluded from both the numerator and the denominator.
 2. A hire must not enter the 60-day denominator until the full 60-day observation window has elapsed.
 3. Monthly trend points must use fully matured start months only.
 4. `is_60_day_early_attrition = true` only when termination occurs from day 0 through day 60 after start.
@@ -898,9 +1094,10 @@ requested_positions = filled_positions + openings_position
 
 1. Historical yields must not use future outcomes.
 2. Stage yields must remain between 0 and 1.
-3. Expected pipeline fills must not exceed remaining open positions per requisition.
-4. Forecast filled positions must not exceed demand.
-5. Forecast logic and fallback hierarchy must be documented and deterministic.
+3. The yield training label is the active fill, not the raw acceptance event and not the employee start.
+4. Expected pipeline fills must not exceed remaining open positions per requisition.
+5. Forecast filled positions must not exceed demand.
+6. Forecast logic and fallback hierarchy must be documented and deterministic.
 
 ---
 
@@ -968,24 +1165,27 @@ The Executive Summary data project is complete when all of the following are tru
 2. Data is reproducible using an as-of date of May 31, 2026.
 3. Historical actual data covers January 2024 through May 31, 2026.
 4. Requisition THDs through May 31, 2027 are preserved for future-demand analysis.
-5. Fill Rate reconciles from requested, filled, and open position quantities.
-6. Median Time to Fill uses approval-to-offer-acceptance duration.
-7. Open-position risk is based on source TOAD and the configured as-of date.
-8. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.
-9. At-Risk Open Positions counts open seats, not merely requisitions.
-10. Hiring constraints are treated as requisition-level attributes.
-11. Funnel metrics distinguish active pipeline from completed historical conversion.
-12. Forecast Fill Rate uses active pipeline stage-to-acceptance yield segmented by Business Unit, Job Family, and Job Level where data supports it.
-13. Forecast expected fills are capped by remaining open positions.
-14. No future actual recruiting outcomes leak into historical metrics or forecast training data.
-15. 60-Day Early Attrition is included as the Executive Summary quality KPI.
-16. The 60-Day Early Attrition KPI uses a rolling 12-month window of fully matured start cohorts.
-17. Immature hires and incomplete start months do not enter the quality denominator or trend.
-18. The speed-versus-quality visual compares median Time to Fill and 60-Day Early Attrition for the same monthly matured hire cohorts.
-19. The speed-versus-quality visual is treated as diagnostic association, not evidence of causation.
-20. Required dimensions, facts, marts, documentation, and schema definitions are produced.
-21. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
-22. Standalone Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
+5. Fill Rate reconciles from requested, filled, and open position quantities, where filled means active fills.
+6. Offer acceptance, active fill, and hire are modelled as three separate concepts; no metric is defined from an application status value.
+7. `offer_accepted_date` is preserved after an employer rescind or a candidate renege, and a seat lost after acceptance is restated as open.
+8. One application contributes at most one governed accepted-offer event, multiple offer versions are resolved upstream, and the limitation plus its remedy (a separate offer-event fact) are documented.
+9. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
+10. Open-position risk is based on source TOAD and the configured as-of date.
+11. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.
+12. At-Risk Open Positions counts open seats, not merely requisitions.
+13. Hiring constraints are treated as requisition-level attributes.
+14. Funnel metrics distinguish active pipeline from completed historical conversion, and an accepted offer remains a successful offer-stage conversion even if it is later lost before the start.
+15. Forecast Fill Rate uses active pipeline stage-to-active-fill yield segmented by Business Unit, Job Family, and Job Level where data supports it.
+16. Forecast expected fills are capped by remaining open positions.
+17. No future actual recruiting outcomes leak into historical metrics or forecast training data.
+18. 60-Day Early Attrition is included as the Executive Summary quality KPI and counts only candidates who actually started employment.
+19. The 60-Day Early Attrition KPI uses a rolling 12-month window of fully matured start cohorts.
+20. Immature hires and incomplete start months do not enter the quality denominator or trend.
+21. The speed-versus-quality visual compares median Time to Fill and 60-Day Early Attrition for the same monthly matured hire cohorts.
+22. The speed-versus-quality visual is treated as diagnostic association, not evidence of causation.
+23. Required dimensions, facts, marts, documentation, and schema definitions are produced.
+24. Power BI can build the Executive Summary page without reconstructing core business logic from raw source files.
+25. Standalone Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
 
 ---
 

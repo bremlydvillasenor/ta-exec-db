@@ -7,6 +7,93 @@ into a small, governed star schema that Power BI can load without rebuilding bus
 Fixed reporting as-of date: **2026-05-31** (from `reference/ref_reporting_config.yaml`).
 Nothing reads the system clock.
 
+## Core vocabulary: accepted offer, fill, hire
+
+These three words mean different things and are never interchangeable. Getting them
+confused is the single most common way a TA delivery number becomes wrong, so the
+contracts model them as three separate concepts with their own columns.
+
+**Offer acceptance is an immutable historical event. Current fill status is a separate
+current-state concept.**
+
+| Term | Meaning | Column | Changes later? | Used by |
+|---|---|---|---|---|
+| **Offer Accepted** | Historical TA fill event: the candidate accepted an offer on or before the as-of date | `fct_application.is_offer_accepted_event`, `offer_accepted_date` | **No.** A later rescind or renege never clears it | Time to Fill (EXEC-05), offer-stage conversion (EXEC-11), Accepted Offer Events (SUPP-06) |
+| **Active Fill** | Current state of the seat: an accepted offer that has **not** subsequently been rescinded or reneged | `fct_application.is_active_fill`, `fct_requisition.filled_positions` | **Yes.** Falls when the offer is lost after acceptance and the seat reopens | Fill Rate (EXEC-01), Positions Filled (EXEC-02), the forecast (FCST-01 to FCST-04) |
+| **Hire** | Employment event: the person actually started work | `fct_application.is_started`, `fct_hire_outcome` | Only forward (a start happens once) | 60-Day Early Attrition (EXEC-13), Speed vs Quality (EXEC-14), Started Hires (SUPP-08) |
+
+What this means in practice:
+
+- A candidate accepts an offer in March and reneges in April. March's Time to Fill and
+  March's offer-stage conversion are unchanged - TA did secure that acceptance. The seat
+  is restated as **open** today, so Fill Rate falls. The person is not a hire and never
+  enters the quality KPI.
+- `offer_accepted_date` is **never** nulled out by a rescind or a renege. Any rule that
+  clears it is a defect, not a cleanup.
+- An accepted offer waiting for its start date is a **fill**, not yet a **hire**. That gap
+  is normal pipeline, not a loss; it is reported as Positions Filled minus Started Hires.
+- The bridge between history and current state is
+  `accepted_offer_events = filled_positions + lost_after_acceptance_positions`, exposed on
+  the page as SUPP-07 Post-Acceptance Losses.
+
+### The four offer-loss terms
+
+An offer can be lost by either side, before or after acceptance. Those are four different
+events with four different consequences, so each has its own reserved word. The words are
+never used interchangeably:
+
+| | **Before** acceptance | **After** acceptance |
+|---|---|---|
+| **Employer** ends it | `offer_withdrawn` | `offer_rescinded` |
+| **Candidate** ends it | `offer_declined` | `candidate_renege` |
+
+The column of the table is what matters for the numbers:
+
+- **Before acceptance** — no acceptance event ever existed. `offer_accepted_date` is null,
+  the seat was never filled, and nothing touches Fill Rate, Time to Fill or offer-stage
+  conversion. The application simply left the process.
+- **After acceptance** — the acceptance event stands and is preserved. The seat *was*
+  filled and is now restated as open, so Fill Rate falls while Time to Fill and offer-stage
+  conversion are unchanged. These two are the post-acceptance losses (SUPP-07).
+
+A candidate who leaves with no offer on the table is `withdrawn`, and one screened out by
+the employer is `rejected`. Neither is an offer-loss term.
+
+Employer rescind and candidate renege are then kept apart on purpose. A rescind is a
+demand-side decision (budget freeze, reorg); a renege is a candidate-market signal
+(competing offer, counter-offer, a start date too far out). Both reopen the seat, but they
+point at different problems and different owners.
+
+Naming note: `fct_application_stage_event.exit_reason` used `offer_rescinded` for the
+*pre*-acceptance case up to v1.1. It is now `offer_withdrawn`, so `rescind` means one thing
+only — after acceptance — across the whole contract set.
+
+### Scope limit: one acceptance per application
+
+**One application contributes at most one governed accepted-offer event.** One accepted
+offer equals one seat, so every offer-based figure is a COUNT of applications, which is what
+keeps `accepted_offer_events`, `filled_positions` and `started_positions` reconcilable at
+requisition grain.
+
+Multiple offer versions before final acceptance — a revised salary, a moved start date, a
+re-issued offer letter — are offer *versions*, not separate acceptance events. They must be
+resolved **upstream** to the single governed acceptance (normally the earliest acceptance
+date of the offer the candidate actually accepted), and the resolution rule must be
+documented where it is applied.
+
+Not covered today: a genuine re-offer cycle, where a candidate accepts, the offer is lost to
+a rescind or renege, and the same candidate is later re-offered and accepts again for the
+same requisition. The source is expected to produce a new application for the second
+attempt.
+
+If multiple acceptance or re-offer cycles per application become a real requirement,
+**introduce a separate offer-event fact** — one row per offer event, with an offer sequence
+number and its own accepted / rescinded / reneged dates — and keep `fct_application` at one
+row per application carrying the resolved current state. Do **not** overload `fct_application`
+with `offer_accepted_date_2`, an offer array, or a repeated group of offer columns: that
+breaks the application grain and every COUNT-based identity above. The full statement lives
+in `facts/fct_application.yaml` under `assumptions.one_acceptance_per_application`.
+
 ## Dataset inventory
 
 | Layer | Dataset | Grain | Rows (approx.) | Main job |
@@ -20,11 +107,11 @@ Nothing reads the system clock.
 | dimension | `dim_start_cohort` | one row per employee start month, Jan 2024 to May 2026 | 29 | Cohort axis for quality visuals; owns maturity and rolling-12 window logic |
 | reference | `ref_reporting_config` | exactly one row | 1 | As-of date, coverage window, targets, thresholds |
 | reference | `ref_risk_band` | one row per TOAD risk band | 4 | Missed / High / Medium / On Track rules and sort order |
-| fact | `fct_requisition` | one row per requisition, as-of state | thousands | Demand, filled, open, TOAD risk, constraint, capped forecast fills |
-| fact | `fct_application` | one row per application, as-of state | tens of thousands | Active pipeline snapshot, offer outcome, Time to Fill, candidate yield |
+| fact | `fct_requisition` | one row per requisition, as-of state | thousands | Demand, active fills, accepted-offer events, post-acceptance losses, starts, open, TOAD risk, constraint, capped forecast fills |
+| fact | `fct_application` | one row per application, as-of state | tens of thousands | Active pipeline snapshot, current status, immutable offer-acceptance event, withdraw / decline / rescind / renege / start events, Time to Fill, candidate yield |
 | fact | `fct_application_stage_event` | one row per application per stage entry | ~5x applications | Historical conversion, completed days in stage, active stage age |
-| fact | `fct_hire_outcome` | one row per started hire | ~ filled positions | 60-day maturity, early attrition, same-hire Time to Fill |
-| mart | `mart_stage_yield` | BU + Job Family + Job Level + stage | small | Stage-to-acceptance yield with documented fallback (forecast training) |
+| fact | `fct_hire_outcome` | one row per **started** hire | <= active fills | 60-day maturity, early attrition, same-hire Time to Fill. Accepted offers that never started are deliberately absent |
+| mart | `mart_stage_yield` | BU + Job Family + Job Level + stage | small | Stage-to-active-fill yield with documented fallback (forecast training) |
 | mart | `mart_exec_demand` | THD month + BU + Job Family + Job Level | small | Fill Rate KPI, demand context, actual vs forecast trend |
 | mart | `mart_exec_risk` | one row per open requisition | hundreds | At-Risk KPI, risk band bars, constraint bars |
 | mart | `mart_exec_pipeline` | THD month + BU + Job Family + Job Level + stage | small | Pipeline health table (active, conversion, days vs SLA) |
@@ -118,10 +205,10 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 1. `ref_reporting_config`, `ref_risk_band` (seed values from YAML)
 2. `dim_date`, `dim_start_cohort` (generated from config), `dim_recruiting_stage`, `dim_hiring_constraint` (seed rows), `dim_business_unit`, `dim_job_family`, `dim_job_level` (from source)
 3. `fct_requisition` (base columns: status, dates, quantities, constraint, risk band) — pipeline/forecast columns are filled in step 6
-4. `fct_application` (base columns) and `fct_application_stage_event`
-5. `mart_stage_yield` (from stage events + application outcomes with a final outcome)
-6. Apply yield: `fct_application.stage_to_acceptance_yield`; then `fct_requisition.active_pipeline_applications`, `expected_pipeline_fills_uncapped`, `expected_pipeline_fills` (capped at `openings_position`)
-7. `fct_hire_outcome` (from accepted applications + HR start/termination events, flags from `dim_start_cohort`)
+4. `fct_application` (base columns, the offer-acceptance event, post-acceptance events and `employee_start_date`) and `fct_application_stage_event`. Resolve multiple source offer versions to the single governed acceptance **before** this step. Derive `is_active_fill` and `post_acceptance_outcome` here; never overwrite `offer_accepted_date` when a rescind or renege is loaded.
+5. `mart_stage_yield` (from stage events + application outcomes with a final outcome; training label is `is_active_fill`)
+6. Apply yield (stage-to-active-fill): `fct_application.stage_to_active_fill_yield`; then `fct_requisition.active_pipeline_applications`, `expected_pipeline_fills_uncapped`, `expected_pipeline_fills` (capped at `openings_position`)
+7. `fct_hire_outcome` (from applications with `is_started` = true + HR start/termination events, flags from `dim_start_cohort`). Accepted offers with no start - pending, rescinded or reneged - are correctly excluded here.
 8. `mart_exec_demand`, `mart_exec_risk`, `mart_exec_pipeline`, `mart_exec_quality`
 9. Reconciliation tests: marts vs facts (see each mart's `data_quality_tests`)
 
@@ -131,7 +218,7 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 2. **Requisition attributes are inherited downward.** THD, BU, Job Family, Job Level and approval date are denormalised onto applications, stage events and hires. This gives one clean star with single-direction filters instead of snowflaked fact chains.
 3. **TOAD is source data.** `target_offer_acceptance_date` is passed through unchanged; `days_to_toad` and `risk_band_code` are computed from it and the configured as-of date, and only for open requisitions.
 4. **`requested_positions = filled_positions + openings_position`** is a hard test for every non-cancelled requisition. Withdrawn seats go to `cancelled_positions` (audit only) so the identity holds and cancelled demand never enters KPIs.
-5. **Offer data is integrated into `fct_application`.** The page needs accepted/declined/rescinded/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual.
+5. **Offer data is integrated into `fct_application`, on a one-acceptance-per-application assumption.** The page needs accepted/declined/rescinded/reneged/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual. This holds only because one application yields at most one governed accepted-offer event, so the offer columns describe a single event rather than a repeated group. Offer versions before final acceptance are resolved upstream. The moment multiple acceptance or re-offer cycles per application are required, that trade-off flips: build a separate offer-event fact rather than adding more offer columns here.
 6. **Three pipeline populations stay separate.** Active snapshot (`fct_application.is_active_pipeline`), completed historical conversion (`fct_application_stage_event.is_completed`, `advanced_to_next_stage`) and completed durations (`days_in_stage`). Rows with a null exit date are excluded from conversion, so candidates still in process are never failed conversions. Active age is a separate column from completed duration.
 7. **Stage flow and SLA are governed in `dim_recruiting_stage` seed rows.** Transformation code reads the dimension rather than hard-coding stage names.
 8. **Forecast is trained and capped upstream.** `mart_stage_yield` uses only applications with a final outcome on or before the as-of date (no future leakage), with fallback `bu_jf_jl → jf_jl → jf → all` when a segment has fewer than `forecast_min_segment_observations`. Yield is applied per active candidate, summed per requisition and capped at `openings_position` on `fct_requisition`. Power BI only sums the capped value.
@@ -139,7 +226,10 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 10. **Quality is start-cohort based and structurally isolated from THD.** `dim_start_cohort` owns maturity and the rolling-12 window; `fct_hire_outcome` and `mart_exec_quality` connect only to it. The KPI is a weighted ratio (SUM of early exits / SUM of matured hires across the latest 12 matured cohorts), never an average of monthly rates.
 11. **Speed vs Quality uses the same hires.** `fct_hire_outcome.time_to_fill_days` is the Time to Fill of each started hire, so the median per start cohort describes exactly the hires in the attrition rate for that cohort. This is different from the THD-based Median Time to Fill KPI, and both are documented as such.
 12. **Medians are computed in Power BI from facts.** Marts store medians only as row-grain reference values for validation. This keeps every median correct under any slicer combination.
-13. **What was left out on purpose:** no candidate dimension, no recruiter dimension, no offer fact, no separate forecast mart, no source-of-hire or cost data. None of these supports a visual on the Executive Summary.
+13. **One word, one meaning, for offer losses.** `offer_withdrawn` (employer, before acceptance), `offer_rescinded` (employer, after acceptance), `offer_declined` (candidate, before acceptance) and `candidate_renege` (candidate, after acceptance) are reserved and never interchanged. Before-acceptance losses never had an acceptance event and cannot affect any fill or delivery metric; after-acceptance losses reduce current fill while leaving history intact. `fct_application_stage_event.exit_reason` carries only the two pre-acceptance offer terms, because a post-acceptance loss is not a stage exit.
+14. **Event and state are separate columns, not one status.** `application_status_current` is mutable and describes the seat today. `is_offer_accepted_event`, `is_offer_rescinded`, `is_candidate_renege` and `is_started` are dated events and never move backwards. No metric is allowed to be defined from a status value - that is exactly how "accepted offer" and "hired" were conflated before. The status value `hired` was removed for this reason and replaced by `offer_accepted` (accepted, not started yet) and `started` (actually started).
+15. **A post-acceptance loss reopens the seat, it does not erase the history.** When an accepted offer is rescinded or reneged: `filled_positions` falls by one, `openings_position` rises by one (so `requested_positions` is unchanged), `lost_after_acceptance_positions` rises by one, and `accepted_offer_events`, `offer_accepted_date` and `time_to_fill_days` are untouched. If the business decides not to refill the seat, it moves to `cancelled_positions` instead. A requisition going from `filled` back to `open` is a valid transition, not a data error.
+16. **What was left out on purpose:** no candidate dimension, no recruiter dimension, no offer fact, no separate forecast mart, no source-of-hire or cost data. None of these supports a visual on the Executive Summary.
 
 ## Verification: wireframe and spec coverage
 
@@ -148,6 +238,7 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 | Header stamp "As of 31 May 2026" | — | `ref_reporting_config.as_of_date` |
 | Slicers: THD, Business Unit, Job Family, Job Level | — | `dim_date`, `dim_business_unit`, `dim_job_family`, `dim_job_level` |
 | KPI Fill Rate + "vs 90% target" + Demand / Filled / Open footer | EXEC-01, EXEC-02, EXEC-03, EXEC-04 | `mart_exec_demand`, target from `ref_reporting_config` |
+| Offer-event context: accepted offers, post-acceptance losses, started hires (tooltips / footers) | SUPP-06, SUPP-07, SUPP-08 | `mart_exec_demand`, `fct_application`, `fct_requisition` |
 | KPI Median Time to Fill | EXEC-05 | `fct_application.time_to_fill_days` |
 | KPI At-Risk Open Positions "of N open", "% of open", band legend | EXEC-08, EXEC-04, SUPP-01 | `mart_exec_risk`, `ref_risk_band` |
 | KPI 60-Day Early Attrition, "87 ÷ 1,064", latest matured cohort | EXEC-13, SUPP-02, SUPP-03, SUPP-04 | `mart_exec_quality`, `dim_start_cohort`, target from `ref_reporting_config` |
@@ -162,3 +253,7 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 
 Spec metrics EXEC-01 to EXEC-14 and section 7 (forecast, FCST-01 to FCST-04) all have a
 governed definition in `metric-def.yaml` and a named source dataset above.
+
+SUPP-06 to SUPP-08 were added with contract v1.1. They are supporting context, not new KPI
+cards: they exist so the difference between historical delivery, current fill and actual
+starts can be shown instead of a Fill Rate that drops with no visible explanation.

@@ -1,12 +1,16 @@
 dataset: fct_requisition
 layer: fact
-version: 1.0
+version: 1.1
 purpose: >
   Requisition-grain fact holding the as-of reporting state of every requisition:
-  demand (requested positions), delivery (filled positions), open positions,
-  TOAD risk, primary hiring constraint and the capped forecast contribution of
-  the active pipeline. It is the only dataset that carries position quantities,
-  which is what protects them from duplication through candidate-level joins.
+  demand (requested positions), current fill (active fills), open positions,
+  historical accepted-offer events, TOAD risk, primary hiring constraint and the
+  capped forecast contribution of the active pipeline. It is the only dataset that
+  carries position quantities, which is what protects them from duplication through
+  candidate-level joins.
+  Current fill and historical delivery are separate: filled_positions is a
+  current-state quantity that shrinks when an accepted offer is later rescinded or
+  reneged, while accepted_offer_events is a historical count that never decreases.
 
 grain: One row per requisition, resolved to its state on the as-of date (2026-05-31).
 
@@ -82,7 +86,36 @@ columns:
   - name: filled_positions
     type: integer
     nullable: false
-    description: Seats with an accepted offer on or before the as-of date. Reconciles to COUNT of fct_application rows with is_offer_accepted = true.
+    description: >
+      ACTIVE FILLS. Seats currently held by an accepted offer that has not
+      subsequently been rescinded or reneged. Current-state quantity: when an
+      accepted offer is lost after acceptance the seat leaves this count and the
+      seat reopens. Reconciles to COUNT of fct_application rows with
+      is_active_fill = true. This is the numerator of Fill Rate (EXEC-01).
+  - name: accepted_offer_events
+    type: integer
+    nullable: false
+    description: >
+      HISTORICAL TA FILL EVENTS. Count of accepted offers on this requisition on or
+      before the as-of date, including offers later rescinded or reneged. Never
+      decreases. Reconciles to COUNT of fct_application rows with
+      is_offer_accepted_event = true. Used for historical delivery reporting; never
+      used as the Fill Rate numerator.
+  - name: lost_after_acceptance_positions
+    type: integer
+    nullable: false
+    description: >
+      Seats whose accepted offer was subsequently lost (employer rescind or candidate
+      renege). Audit column. accepted_offer_events = filled_positions +
+      lost_after_acceptance_positions. Default 0.
+  - name: started_positions
+    type: integer
+    nullable: false
+    description: >
+      Seats where the person actually started employment on or before the as-of date
+      (hires). Subset of filled_positions; the remainder are active fills still
+      pending a start. Reconciles to COUNT of fct_application rows with
+      is_started = true. Default 0.
   - name: openings_position
     type: integer
     nullable: false
@@ -90,7 +123,10 @@ columns:
   - name: cancelled_positions
     type: integer
     nullable: false
-    description: Seats removed from demand (partial cancellation). Audit only; not part of requested_positions. Default 0.
+    description: >
+      Seats removed from demand (partial cancellation), including a seat whose
+      accepted offer was lost after acceptance and which the business decided not to
+      re-open. Audit only; not part of requested_positions. Default 0.
   # risk (open requisitions only)
   - name: days_to_toad
     type: integer
@@ -114,7 +150,7 @@ columns:
   - name: expected_pipeline_fills_uncapped
     type: decimal(10,4)
     nullable: true
-    description: SUM(stage_to_acceptance_yield) over active applications on the requisition. Null when not open.
+    description: SUM(stage_to_active_fill_yield) over active applications on the requisition. Null when not open.
   - name: expected_pipeline_fills
     type: decimal(10,4)
     nullable: true
@@ -142,7 +178,13 @@ relationships:
 
 business_rules:
   - Demand, Positions Filled, Open Positions and Fill Rate are all computed from this table alone.
+  - filled_positions is CURRENT state, accepted_offer_events is HISTORY. Only filled_positions responds to a post-acceptance rescind or renege; accepted_offer_events never decreases and no accepted-offer event is ever deleted or back-dated away.
+  - accepted_offer_events = filled_positions + lost_after_acceptance_positions on every requisition.
+  - One accepted offer equals one seat. This holds because fct_application allows at most one governed accepted-offer event per application (see its assumptions.one_acceptance_per_application); the three counts above are COUNTs of applications, so a second acceptance on one application would double-count a seat here.
+  - started_positions <= filled_positions. An active fill that has not started yet is still a fill; it is not yet a hire.
+  - When an accepted offer is rescinded or reneged the seat returns to open demand: filled_positions decreases by one and openings_position increases by one, so requested_positions is unchanged. If the business decides not to re-open the seat, the seat moves to cancelled_positions and requested_positions decreases instead. Either way the identity below still holds.
   - For non-cancelled requisitions requested_positions = filled_positions + openings_position always holds. A requisition whose remaining seats were withdrawn has those seats moved to cancelled_positions.
+  - A requisition that was 'filled' can legitimately return to 'open' after a post-acceptance loss. This is a valid state transition, not a data error.
   - requisition_status = filled means openings_position = 0 and filled_positions = requested_positions.
   - is_open requisitions must have openings_position > 0 and requested_positions > 0.
   - TOAD is the source value. The transformation may validate it (e.g. TOAD <= THD) but must never overwrite it.
@@ -153,10 +195,13 @@ business_rules:
 data_quality_tests:
   - {test: unique, columns: [requisition_key]}
   - {test: unique, columns: [requisition_id]}
-  - {test: not_null, columns: [requisition_key, requisition_id, requisition_status, approval_date, target_hire_date, target_offer_acceptance_date, requested_positions, filled_positions, openings_position, business_unit_key, job_family_key, job_level_key, hiring_constraint_key, thd_date_key]}
+  - {test: not_null, columns: [requisition_key, requisition_id, requisition_status, approval_date, target_hire_date, target_offer_acceptance_date, requested_positions, filled_positions, accepted_offer_events, lost_after_acceptance_positions, started_positions, openings_position, business_unit_key, job_family_key, job_level_key, hiring_constraint_key, thd_date_key]}
   - {test: accepted_values, column: requisition_status, values: [open, filled, cancelled]}
-  - {test: accepted_range, columns: [requested_positions, filled_positions, openings_position, cancelled_positions], min: 0}
+  - {test: accepted_range, columns: [requested_positions, filled_positions, accepted_offer_events, lost_after_acceptance_positions, started_positions, openings_position, cancelled_positions], min: 0}
   - {test: expression, expression: "filled_positions <= requested_positions"}
+  - {test: expression, expression: "accepted_offer_events = filled_positions + lost_after_acceptance_positions", severity: error}
+  - {test: expression, expression: "started_positions <= filled_positions", severity: error}
+  - {test: expression, expression: "accepted_offer_events >= filled_positions", notes: History never shrinks below current fill.}
   - {test: expression, expression: "openings_position <= requested_positions"}
   - {test: expression, expression: "is_cancelled OR requested_positions = filled_positions + openings_position", severity: error}
   - {test: expression, expression: "is_open = (requisition_status = 'open' AND openings_position > 0)"}
@@ -170,7 +215,10 @@ data_quality_tests:
   - {test: expression, expression: "is_at_risk = (days_to_toad <= at_risk_max_days_to_toad)", filter: is_open}
   - {test: expression, expression: "expected_pipeline_fills <= openings_position", filter: is_open}
   - {test: expression, expression: "expected_pipeline_fills <= expected_pipeline_fills_uncapped", filter: is_open}
-  - {test: reconciliation, expression: "filled_positions = COUNT(fct_application WHERE requisition_key matches AND is_offer_accepted)", severity: error}
+  - {test: reconciliation, expression: "filled_positions = COUNT(fct_application WHERE requisition_key matches AND is_active_fill)", severity: error}
+  - {test: reconciliation, expression: "accepted_offer_events = COUNT(fct_application WHERE requisition_key matches AND is_offer_accepted_event)", severity: error}
+  - {test: reconciliation, expression: "lost_after_acceptance_positions = COUNT(fct_application WHERE requisition_key matches AND is_offer_accepted_event AND NOT is_active_fill)", severity: error}
+  - {test: reconciliation, expression: "started_positions = COUNT(fct_application WHERE requisition_key matches AND is_started) = COUNT(fct_hire_outcome WHERE requisition_key matches)", severity: error}
   - {test: reconciliation, expression: "active_pipeline_applications = COUNT(fct_application WHERE requisition_key matches AND is_active_pipeline)"}
   - {test: expression, expression: "NOT is_open implies active_pipeline_applications = 0"}
   - {test: referential_integrity, description: All dimension keys exist in their dimensions.}
@@ -182,7 +230,13 @@ power_bi:
     - name: Requested Positions
       dax: SUM(fct_requisition[requested_positions]) with filter fct_requisition[is_cancelled] = FALSE
     - name: Positions Filled
-      dax: SUM(fct_requisition[filled_positions]) with filter is_cancelled = FALSE
+      dax: SUM(fct_requisition[filled_positions]) with filter is_cancelled = FALSE   -- active fills, current state
+    - name: Accepted Offer Events
+      dax: SUM(fct_requisition[accepted_offer_events]) with filter is_cancelled = FALSE   -- historical, never decreases
+    - name: Post-Acceptance Losses
+      dax: SUM(fct_requisition[lost_after_acceptance_positions]) with filter is_cancelled = FALSE
+    - name: Started Positions
+      dax: SUM(fct_requisition[started_positions]) with filter is_cancelled = FALSE
     - name: Open Positions
       dax: SUM(fct_requisition[openings_position]) with filter is_open = TRUE
     - name: Fill Rate
@@ -192,3 +246,7 @@ power_bi:
     (mart_exec_demand, mart_exec_risk) are aggregations/projections of it and must
     reconcile to it under every supported filter. Never relate this table to
     fct_application in the model.
+    Use [Positions Filled] for the current fill picture (Fill Rate, open vs filled)
+    and [Accepted Offer Events] for historical TA delivery. They differ exactly by
+    [Post-Acceptance Losses]; showing both on one page is the intended way to make a
+    rescind or renege visible instead of silently erasing it.
