@@ -1,0 +1,95 @@
+dataset: mart_stage_yield
+layer: mart
+version: 1.0
+purpose: >
+  Historical stage-to-acceptance yield lookup used by the Forecast Fill Rate.
+  For each segment and stage it stores the probability that a candidate who
+  entered that stage eventually accepted an offer, using only outcomes known on
+  or before the as-of date, plus the documented fallback used when the segment
+  is too small. It is deliberately not filtered by THD: it is a training
+  table, not a reporting view. Exposed to Power BI for transparency and tooltips only.
+
+grain: One row per Business Unit + Job Family + Job Level + Recruiting Stage combination that exists on any requisition.
+
+primary_key: [business_unit_key, job_family_key, job_level_key, recruiting_stage_key]
+
+source: >
+  fct_application_stage_event (stage entries) joined to fct_application
+  (has_final_outcome, is_offer_accepted). Fallback thresholds from
+  ref_reporting_config.forecast_min_segment_observations.
+
+columns:
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: recruiting_stage_key
+    type: integer
+    nullable: false
+  - name: entered_stage_count
+    type: integer
+    nullable: false
+    description: Applications with has_final_outcome = true that entered this stage at least once, in this exact segment.
+  - name: reached_acceptance_count
+    type: integer
+    nullable: false
+    description: Of those, applications with is_offer_accepted = true.
+  - name: observed_yield
+    type: decimal(6,4)
+    nullable: true
+    description: reached_acceptance_count / entered_stage_count at this exact segment. Null when entered_stage_count = 0.
+  - name: applied_yield
+    type: decimal(6,4)
+    nullable: false
+    description: The yield actually used for active candidates in this segment + stage, after fallback.
+  - name: yield_segment_level
+    type: string
+    nullable: false
+    description: >
+      Segment that supplied applied_yield. Fallback order:
+      bu_jf_jl (exact) -> jf_jl (drop Business Unit) -> jf (Job Family only) -> all (global by stage).
+      The first level with entered_stage_count >= forecast_min_segment_observations is used.
+    accepted_values: [bu_jf_jl, jf_jl, jf, all]
+  - name: applied_observations
+    type: integer
+    nullable: false
+    description: entered_stage_count of the segment that supplied applied_yield.
+  - name: as_of_date
+    type: date
+    nullable: false
+    description: Reporting date the yield was trained for.
+
+relationships:
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_recruiting_stage, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: many_to_one, active: true}
+
+business_rules:
+  - Training population = applications with a final outcome on or before the as-of date. Active applications are excluded, so nobody still in process is treated as a failure and no future outcome leaks in.
+  - An application counts once per stage even if it re-entered the stage.
+  - Yield is monotone in practice (later stages have higher yield) but this is not enforced; it is reported as a warning test.
+  - The fallback hierarchy is deterministic and documented here; changing it is a contract change.
+  - Every active application in fct_application must find exactly one row here for its segment + current stage.
+
+data_quality_tests:
+  - {test: unique, columns: [business_unit_key, job_family_key, job_level_key, recruiting_stage_key]}
+  - {test: not_null, columns: [applied_yield, yield_segment_level, applied_observations]}
+  - {test: accepted_range, columns: [observed_yield, applied_yield], min: 0, max: 1}
+  - {test: expression, expression: "reached_acceptance_count <= entered_stage_count"}
+  - {test: expression, expression: "yield_segment_level = 'bu_jf_jl' implies applied_yield = observed_yield AND entered_stage_count >= forecast_min_segment_observations"}
+  - {test: expression, expression: "applied_observations >= forecast_min_segment_observations OR yield_segment_level = 'all'"}
+  - {test: expression, expression: "applied_yield for offer stage >= applied_yield for interview stage within the same segment", severity: warn}
+  - {test: reconciliation, expression: "every (segment, current stage) of active fct_application rows exists here", severity: error}
+  - {test: reconciliation, expression: "fct_application.stage_to_acceptance_yield = applied_yield for the matching row"}
+
+power_bi:
+  hide_table: true
+  notes: >
+    Not needed by any Executive Summary visual; load only for tooltips or audit.
+    Yields are already applied to fct_application and capped on fct_requisition.

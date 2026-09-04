@@ -1,0 +1,140 @@
+dataset: dim_date
+layer: dimension
+version: 1.0
+purpose: >
+  Conformed calendar dimension. It is the Target Hire Date (THD) axis for every
+  demand-oriented Executive Summary visual and the range slicer for THD.
+  It covers actual history (2024-01-01 to 2026-05-31) and the future demand
+  horizon (through 2027-05-31) so future THDs are never dropped.
+
+grain: One row per calendar day from 2024-01-01 through 2027-05-31.
+
+primary_key: [date_key]
+unique_keys:
+  - [calendar_date]
+
+source: >
+  Generated from ref_reporting_config (history_start_date, future_thd_end_date,
+  as_of_date). No external source.
+
+columns:
+  - name: date_key
+    type: integer
+    nullable: false
+    description: Surrogate key in yyyymmdd form (e.g. 20260531).
+  - name: calendar_date
+    type: date
+    nullable: false
+    description: The calendar day.
+  - name: year
+    type: integer
+    nullable: false
+  - name: quarter
+    type: integer
+    nullable: false
+    description: Calendar quarter 1-4.
+  - name: quarter_label
+    type: string
+    nullable: false
+    description: e.g. "2026-Q2".
+  - name: month_number
+    type: integer
+    nullable: false
+    description: 1-12.
+  - name: month_name
+    type: string
+    nullable: false
+    description: e.g. "May".
+  - name: year_month
+    type: integer
+    nullable: false
+    description: yyyymm (e.g. 202605). Recommended THD slicer grain and sort column for month labels.
+  - name: month_start_date
+    type: date
+    nullable: false
+    description: First day of the month. Used as the join value for month-grain marts.
+  - name: month_start_date_key
+    type: integer
+    nullable: false
+    description: date_key of month_start_date. Month-grain marts join to dim_date on this value.
+  - name: month_label
+    type: string
+    nullable: false
+    description: e.g. "May 2026". Sort by year_month in Power BI.
+  - name: is_on_or_before_as_of_date
+    type: boolean
+    nullable: false
+    description: true when calendar_date <= ref_reporting_config.as_of_date. Actual events may only fall on these days.
+  - name: is_future_demand_period
+    type: boolean
+    nullable: false
+    description: true when calendar_date > as_of_date. Only target/planned dates may fall here.
+  - name: is_as_of_date
+    type: boolean
+    nullable: false
+    description: true for exactly one row, the configured reporting as-of date (2026-05-31).
+
+relationships:
+  - to: fct_requisition
+    columns: {date_key: thd_date_key}
+    cardinality: one_to_many
+    active: true
+    role: target_hire_date
+  - to: fct_application
+    columns: {date_key: thd_date_key}
+    cardinality: one_to_many
+    active: true
+    role: target_hire_date (inherited from requisition)
+  - to: fct_application_stage_event
+    columns: {date_key: thd_date_key}
+    cardinality: one_to_many
+    active: true
+    role: target_hire_date (inherited from requisition)
+  - to: mart_exec_demand
+    columns: {date_key: thd_month_key}
+    cardinality: one_to_many
+    active: true
+    role: target_hire_date month
+  - to: mart_exec_risk
+    columns: {date_key: thd_date_key}
+    cardinality: one_to_many
+    active: true
+    role: target_hire_date
+  - to: mart_exec_pipeline
+    columns: {date_key: thd_month_key}
+    cardinality: one_to_many
+    active: true
+    role: target_hire_date month
+  - to: fct_hire_outcome
+    columns: {date_key: employee_start_date_key}
+    cardinality: one_to_many
+    active: false
+    role: employee_start_date (optional, inactive; quality visuals use dim_start_cohort instead)
+
+business_rules:
+  - The date range is driven by configuration, never by the system clock.
+  - Exactly one row has is_as_of_date = true.
+  - dim_date is only used for THD-based filtering on the Executive Summary. Employee start cohorts use dim_start_cohort so the THD slicer cannot truncate the 60-day quality window.
+
+data_quality_tests:
+  - {test: unique, columns: [date_key]}
+  - {test: unique, columns: [calendar_date]}
+  - {test: not_null, columns: [date_key, calendar_date, year_month, month_start_date_key]}
+  - {test: no_gaps, columns: [calendar_date], description: Every day between min and max is present.}
+  - {test: row_count_equals, value: 1, filter: is_as_of_date = true}
+  - {test: accepted_range, columns: [calendar_date], min: "2024-01-01", max: "2027-05-31"}
+
+power_bi:
+  mark_as_date_table: true
+  date_column: calendar_date
+  sort_by:
+    month_label: year_month
+    month_name: month_number
+  hide_columns: [date_key, month_start_date_key]
+  slicer_guidance: >
+    Use year_month or month_label for the Target Hire Date slicer. Month-grain marts
+    (mart_exec_demand, mart_exec_pipeline) join on the month start date, so a slicer at
+    day grain that cuts across a month would filter facts and marts differently.
+  notes: >
+    Single active relationship per fact, always on the THD role. Do not create an active
+    relationship to fct_hire_outcome or mart_exec_quality.

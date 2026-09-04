@@ -1,0 +1,63 @@
+dataset: dim_job_level
+layer: dimension
+version: 1.0
+purpose: >
+  Conformed Job Level dimension. It is the Job Level slicer retained in the
+  wireframe and a segmentation attribute for forecast yield.
+
+grain: One row per Job Level.
+
+primary_key: [job_level_key]
+unique_keys:
+  - [job_level_code]
+
+source: Requisition source system (job attributes on the requisition).
+
+columns:
+  - name: job_level_key
+    type: integer
+    nullable: false
+    description: Surrogate key.
+  - name: job_level_code
+    type: string
+    nullable: false
+    description: Stable natural code (e.g. "L3").
+  - name: job_level_name
+    type: string
+    nullable: false
+    description: Display name (e.g. "Senior").
+  - name: level_rank
+    type: integer
+    nullable: false
+    description: Ordinal seniority used for sorting (1 = most junior).
+  - name: is_active
+    type: boolean
+    nullable: false
+
+relationships:
+  - {to: fct_requisition, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: fct_application, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: fct_application_stage_event, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: fct_hire_outcome, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_demand, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_risk, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_pipeline, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_quality, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+  - {to: mart_stage_yield, columns: {job_level_key: job_level_key}, cardinality: one_to_many, active: true}
+
+business_rules:
+  - Job Level is a requisition attribute inherited by applications, stage events and hires.
+  - Include an "Unknown" member (key -1).
+
+data_quality_tests:
+  - {test: unique, columns: [job_level_key]}
+  - {test: unique, columns: [job_level_code]}
+  - {test: unique, columns: [level_rank]}
+  - {test: not_null, columns: [job_level_key, job_level_code, job_level_name, level_rank]}
+  - {test: referential_integrity, description: Every job_level_key in facts and marts exists here.}
+
+power_bi:
+  hide_columns: [job_level_key]
+  sort_by: {job_level_name: level_rank}
+  slicer_column: job_level_name
+  notes: Single-direction filter to facts and marts.

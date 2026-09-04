@@ -1,0 +1,188 @@
+dataset: fct_application
+layer: fact
+version: 1.0
+purpose: >
+  Application-grain fact describing the current (as-of) state of every candidate
+  application, including offer outcome fields. It supports the active pipeline
+  snapshot, positions-filled reconciliation, Time to Fill (accepted offers) and
+  the stage-to-acceptance probability of each active candidate used by the forecast.
+  Offer data is integrated here rather than in a separate offer fact.
+
+grain: One row per application (one candidate applying to one requisition), state as of 2026-05-31.
+
+primary_key: [application_key]
+unique_keys:
+  - [application_id]
+  - [candidate_id, requisition_id]
+
+source: >
+  Applicant tracking system application and offer records, restricted to events on
+  or before as_of_date. Requisition attributes (THD, segment keys, approval date)
+  are denormalised from fct_requisition. Yield columns come from mart_stage_yield.
+
+columns:
+  # keys
+  - name: application_key
+    type: integer
+    nullable: false
+  - name: application_id
+    type: string
+    nullable: false
+    description: Natural identifier.
+  - name: candidate_id
+    type: string
+    nullable: false
+    description: Candidate identifier. No candidate dimension is in scope; this is a degenerate key.
+  - name: requisition_key
+    type: integer
+    nullable: false
+  - name: requisition_id
+    type: string
+    nullable: false
+    description: Denormalised for readability and drill-through.
+  - name: thd_date_key
+    type: integer
+    nullable: false
+    description: Requisition target_hire_date key, inherited. Active relationship to dim_date (THD role).
+  - name: business_unit_key
+    type: integer
+    nullable: false
+    description: Inherited from requisition.
+  - name: job_family_key
+    type: integer
+    nullable: false
+    description: Inherited from requisition.
+  - name: job_level_key
+    type: integer
+    nullable: false
+    description: Inherited from requisition.
+  - name: current_recruiting_stage_key
+    type: integer
+    nullable: false
+    description: Last stage the application entered (dim_recruiting_stage). For hired applications this is offer.
+  # status
+  - name: application_status
+    type: string
+    nullable: false
+    description: As-of status. active = still in process on an open requisition.
+    accepted_values: [active, hired, rejected, withdrawn, offer_declined, offer_rescinded]
+  - name: is_active_pipeline
+    type: boolean
+    nullable: false
+    description: application_status = active. Only these rows count in Funnel Volume by Stage and in the forecast.
+  - name: is_offer_accepted
+    type: boolean
+    nullable: false
+    description: application_status = hired (offer accepted on or before as_of_date).
+  - name: has_final_outcome
+    type: boolean
+    nullable: false
+    description: NOT is_active_pipeline. Rows eligible for historical conversion and yield training.
+  - name: disposition_reason
+    type: string
+    nullable: true
+    description: Reason for rejection or withdrawal where available. Null for active and hired.
+  # dates (all <= as_of_date)
+  - name: application_date
+    type: date
+    nullable: false
+  - name: current_stage_entry_date
+    type: date
+    nullable: false
+    description: Entry date of the current stage.
+  - name: active_stage_age_days
+    type: integer
+    nullable: true
+    description: as_of_date - current_stage_entry_date. Populated only when is_active_pipeline. Operational age, not a completed duration.
+  - name: offer_extended_date
+    type: date
+    nullable: true
+  - name: offer_accepted_date
+    type: date
+    nullable: true
+    description: Populated only when is_offer_accepted. Defines the filled event.
+  - name: offer_declined_date
+    type: date
+    nullable: true
+  - name: offer_rescinded_date
+    type: date
+    nullable: true
+  - name: withdrawal_date
+    type: date
+    nullable: true
+  - name: requisition_approval_date
+    type: date
+    nullable: false
+    description: Denormalised from fct_requisition. Start point of Time to Fill.
+  - name: time_to_fill_days
+    type: integer
+    nullable: true
+    description: offer_accepted_date - requisition_approval_date. Populated only when is_offer_accepted. Source of Median Time to Fill (EXEC-05).
+  # forecast inputs (active only)
+  - name: stage_to_acceptance_yield
+    type: decimal(6,4)
+    nullable: true
+    description: Historical probability of reaching accepted offer from current stage, looked up in mart_stage_yield by segment + stage with fallback. Populated only when is_active_pipeline.
+  - name: yield_segment_level
+    type: string
+    nullable: true
+    description: Segment level that supplied the yield.
+    accepted_values: [bu_jf_jl, jf_jl, jf, all, null]
+
+relationships:
+  - {to: dim_date, columns: {thd_date_key: date_key}, cardinality: many_to_one, active: true, role: target_hire_date}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_recruiting_stage, columns: {current_recruiting_stage_key: recruiting_stage_key}, cardinality: many_to_one, active: true}
+  - {to: fct_requisition, columns: {requisition_key: requisition_key}, cardinality: many_to_one, active: false, notes: Logical only; not modelled in Power BI. Segment and THD keys are inherited instead.}
+  - {to: fct_application_stage_event, columns: {application_key: application_key}, cardinality: one_to_many, active: false, notes: Logical only; not modelled in Power BI.}
+  - {to: fct_hire_outcome, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only; a started hire references its application.}
+
+business_rules:
+  - Active applications must belong to requisitions where fct_requisition.is_open = true. Closing or cancelling a requisition dispositions its active candidates (withdrawn/rejected) in the source or the transformation flags the row.
+  - Exactly one current stage per application at the as-of date.
+  - Positions Filled reconciles to accepted offers: COUNT(is_offer_accepted) per requisition = fct_requisition.filled_positions.
+  - Time to Fill uses accepted offers only and is never negative.
+  - Active candidates are neither successes nor failures for conversion; they are excluded from historical conversion and yield training (has_final_outcome = false).
+  - No position quantity is stored here. Never join fct_requisition quantities onto this grain in Power BI.
+
+data_quality_tests:
+  - {test: unique, columns: [application_key]}
+  - {test: unique, columns: [application_id]}
+  - {test: unique, columns: [candidate_id, requisition_id]}
+  - {test: not_null, columns: [application_key, candidate_id, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key, application_status, application_date, current_stage_entry_date, requisition_approval_date]}
+  - {test: accepted_values, column: application_status, values: [active, hired, rejected, withdrawn, offer_declined, offer_rescinded]}
+  - {test: expression, expression: "is_active_pipeline = (application_status = 'active')"}
+  - {test: expression, expression: "is_offer_accepted = (application_status = 'hired')"}
+  - {test: expression, expression: "has_final_outcome = NOT is_active_pipeline"}
+  - {test: expression, expression: "all populated actual dates <= as_of_date"}
+  - {test: expression, expression: "application_date >= requisition_approval_date"}
+  - {test: expression, expression: "offer_accepted_date >= offer_extended_date >= application_date", filter: is_offer_accepted}
+  - {test: expression, expression: "is_offer_accepted implies offer_accepted_date IS NOT NULL AND time_to_fill_days = DATEDIFF(requisition_approval_date, offer_accepted_date)"}
+  - {test: expression, expression: "NOT is_offer_accepted implies offer_accepted_date IS NULL AND time_to_fill_days IS NULL"}
+  - {test: accepted_range, columns: [time_to_fill_days], min: 0}
+  - {test: expression, expression: "application_status = 'offer_declined' implies offer_declined_date IS NOT NULL"}
+  - {test: expression, expression: "application_status = 'offer_rescinded' implies offer_rescinded_date IS NOT NULL"}
+  - {test: expression, expression: "application_status = 'withdrawn' implies withdrawal_date IS NOT NULL"}
+  - {test: expression, expression: "is_active_pipeline implies active_stage_age_days = DATEDIFF(current_stage_entry_date, as_of_date) AND stage_to_acceptance_yield BETWEEN 0 AND 1 AND yield_segment_level IS NOT NULL"}
+  - {test: expression, expression: "NOT is_active_pipeline implies active_stage_age_days IS NULL AND stage_to_acceptance_yield IS NULL"}
+  - {test: reconciliation, expression: "is_active_pipeline implies fct_requisition.is_open = true for requisition_key", severity: error}
+  - {test: reconciliation, expression: "thd_date_key, business_unit_key, job_family_key, job_level_key, requisition_approval_date equal the values on fct_requisition for requisition_key"}
+  - {test: reconciliation, expression: "current_recruiting_stage_key = stage of the fct_application_stage_event row with is_current_stage = true"}
+  - {test: referential_integrity, description: All dimension keys exist; requisition_key exists in fct_requisition.}
+
+power_bi:
+  hide_columns: [application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key]
+  summarization_off: [time_to_fill_days, active_stage_age_days, stage_to_acceptance_yield]
+  measures:
+    - name: Median Time to Fill
+      dax: MEDIAN(fct_application[time_to_fill_days])   -- blanks (non-accepted rows) are ignored
+    - name: Active Candidates
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_active_pipeline] = TRUE)
+    - name: Accepted Offers
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_offer_accepted] = TRUE)
+  notes: >
+    Because THD and segment keys are inherited, the same slicers filter this fact and
+    fct_requisition without a fact-to-fact relationship. Medians must always be computed
+    here (or in fct_hire_outcome for cohort views), never by averaging mart medians.

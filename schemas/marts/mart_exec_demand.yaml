@@ -1,0 +1,131 @@
+dataset: mart_exec_demand
+layer: mart
+version: 1.0
+purpose: >
+  THD-month executive mart for hiring demand, delivery and forecast. It feeds the
+  Fill Rate KPI card (with its Demand / Filled / Open context), the Median Time to
+  Fill KPI reference value, and the "Actual Fill Rate vs Forecast Fill Rate" trend.
+  Demand and forecast share one grain and one filter context, so they are kept in
+  one table instead of two.
+
+grain: One row per Target Hire Date month + Business Unit + Job Family + Job Level with at least one non-cancelled requisition.
+
+primary_key: [thd_month_key, business_unit_key, job_family_key, job_level_key]
+
+source: >
+  fct_requisition (non-cancelled rows) aggregated by THD month and segment.
+  Median Time to Fill from fct_application accepted offers on the same requisitions.
+
+columns:
+  - name: thd_month_key
+    type: integer
+    nullable: false
+    description: date_key of the first day of the THD month (yyyymm01). Active relationship to dim_date.
+  - name: thd_month_start_date
+    type: date
+    nullable: false
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: requisition_count
+    type: integer
+    nullable: false
+    description: Non-cancelled requisitions in the cell. Context only.
+  - name: requested_positions
+    type: integer
+    nullable: false
+    description: SUM(fct_requisition.requested_positions). Demand (EXEC-03).
+  - name: filled_positions
+    type: integer
+    nullable: false
+    description: SUM(fct_requisition.filled_positions). Positions Filled (EXEC-02).
+  - name: open_positions
+    type: integer
+    nullable: false
+    description: SUM(fct_requisition.openings_position) where is_open. Total Open Positions (EXEC-04).
+  - name: fill_rate
+    type: decimal(6,4)
+    nullable: true
+    description: filled_positions / requested_positions at this row grain. Reference value; Power BI recomputes as SUM/SUM.
+  - name: accepted_offer_count
+    type: integer
+    nullable: false
+    description: Accepted offers on these requisitions. Denominator context for the median.
+  - name: median_time_to_fill_days
+    type: decimal(6,1)
+    nullable: true
+    description: Median time_to_fill_days of accepted offers in this cell. Valid only at row grain (medians do not aggregate). Power BI computes filtered medians from fct_application.
+  - name: active_pipeline_applications
+    type: integer
+    nullable: false
+    description: SUM(fct_requisition.active_pipeline_applications). Context only.
+  - name: expected_pipeline_fills
+    type: decimal(10,4)
+    nullable: false
+    description: SUM(fct_requisition.expected_pipeline_fills) (already capped per requisition). 0 when no open requisitions.
+  - name: forecast_filled_positions
+    type: decimal(10,4)
+    nullable: false
+    description: filled_positions + expected_pipeline_fills.
+  - name: forecast_fill_rate
+    type: decimal(6,4)
+    nullable: true
+    description: forecast_filled_positions / requested_positions at row grain. Reference value.
+
+relationships:
+  - {to: dim_date, columns: {thd_month_key: date_key}, cardinality: many_to_one, active: true, role: target_hire_date month}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+
+business_rules:
+  - Cancelled requisitions are excluded before aggregation.
+  - requested_positions = filled_positions + open_positions in every row and therefore in every filter context.
+  - forecast_filled_positions <= requested_positions in every row because the cap is applied at requisition level.
+  - Forecast measures eventual attainment, not on-time delivery; a position can be forecast as filled after missing its TOAD.
+  - Rates and medians stored here are row-grain reference values for validation. Power BI must use additive columns for rates and the facts for medians.
+
+data_quality_tests:
+  - {test: unique, columns: [thd_month_key, business_unit_key, job_family_key, job_level_key]}
+  - {test: not_null, columns: [thd_month_key, requested_positions, filled_positions, open_positions, expected_pipeline_fills, forecast_filled_positions]}
+  - {test: expression, expression: "requested_positions = filled_positions + open_positions", severity: error}
+  - {test: expression, expression: "forecast_filled_positions = filled_positions + expected_pipeline_fills"}
+  - {test: expression, expression: "forecast_filled_positions <= requested_positions", severity: error}
+  - {test: expression, expression: "expected_pipeline_fills <= open_positions"}
+  - {test: accepted_range, columns: [fill_rate, forecast_fill_rate], min: 0, max: 1}
+  - {test: expression, expression: "forecast_fill_rate >= fill_rate", filter: fill_rate IS NOT NULL}
+  - {test: reconciliation, expression: "SUM(requested_positions) = SUM(fct_requisition.requested_positions WHERE NOT is_cancelled) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(open_positions) = SUM(mart_exec_risk.openings_position) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(accepted_offer_count) = COUNT(fct_application.is_offer_accepted)"}
+
+power_bi:
+  hide_columns: [thd_month_key, business_unit_key, job_family_key, job_level_key, fill_rate, forecast_fill_rate, median_time_to_fill_days]
+  measures:
+    - name: Requested Positions
+      dax: SUM(mart_exec_demand[requested_positions])
+    - name: Positions Filled
+      dax: SUM(mart_exec_demand[filled_positions])
+    - name: Open Positions
+      dax: SUM(mart_exec_demand[open_positions])
+    - name: Fill Rate
+      dax: DIVIDE([Positions Filled], [Requested Positions])
+    - name: Fill Rate Target
+      dax: MAX(ref_reporting_config[fill_rate_target])
+    - name: Expected Pipeline Fills
+      dax: SUM(mart_exec_demand[expected_pipeline_fills])
+    - name: Forecast Filled Positions
+      dax: "[Positions Filled] + [Expected Pipeline Fills]"
+    - name: Forecast Fill Rate
+      dax: DIVIDE([Forecast Filled Positions], [Requested Positions])
+  visuals:
+    - KPI card "Fill Rate" with footer Demand / Filled / Open.
+    - Line chart x = dim_date[month_label] (THD), lines = [Fill Rate] and [Forecast Fill Rate], constant line = [Fill Rate Target].
+  notes: >
+    Use a month-grain THD slicer. Median Time to Fill KPI comes from fct_application
+    (MEDIAN) so it honours all slicers; the stored median here is for validation.

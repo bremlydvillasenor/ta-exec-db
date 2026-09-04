@@ -1,0 +1,138 @@
+dataset: mart_exec_risk
+layer: mart
+version: 1.0
+purpose: >
+  Open-position register for the Executive Summary. One row per open, non-cancelled
+  requisition with days to TOAD, risk band, primary hiring constraint and the open
+  seat count. It feeds the At-Risk Open Positions KPI, "Open positions by risk band"
+  and "Open positions by primary constraint". Requisition grain keeps
+  openings_position safe to SUM under any filter.
+
+grain: One row per open requisition (fct_requisition.is_open = true).
+
+primary_key: [requisition_key]
+unique_keys:
+  - [requisition_id]
+
+source: fct_requisition filtered to is_open = true, with risk columns already applied from ref_risk_band.
+
+columns:
+  - name: requisition_key
+    type: integer
+    nullable: false
+  - name: requisition_id
+    type: string
+    nullable: false
+  - name: thd_date_key
+    type: integer
+    nullable: false
+    description: Active relationship to dim_date (THD role) so the THD slicer applies.
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: hiring_constraint_key
+    type: integer
+    nullable: false
+  - name: target_hire_date
+    type: date
+    nullable: false
+  - name: target_offer_acceptance_date
+    type: date
+    nullable: false
+    description: Source TOAD, unchanged.
+  - name: days_to_toad
+    type: integer
+    nullable: false
+    description: target_offer_acceptance_date - as_of_date. Negative when missed.
+  - name: risk_band_code
+    type: string
+    nullable: false
+    accepted_values: [missed, high_risk, medium_risk, on_track]
+  - name: risk_band_name
+    type: string
+    nullable: false
+    description: Denormalised from ref_risk_band for drill-through readability.
+  - name: risk_band_sort_order
+    type: integer
+    nullable: false
+  - name: is_at_risk
+    type: boolean
+    nullable: false
+    description: days_to_toad <= 14.
+  - name: requested_positions
+    type: integer
+    nullable: false
+    description: Context for tooltips.
+  - name: filled_positions
+    type: integer
+    nullable: false
+    description: Context for tooltips.
+  - name: openings_position
+    type: integer
+    nullable: false
+    description: Open seats. The only weight used by risk and constraint visuals.
+  - name: at_risk_open_positions
+    type: integer
+    nullable: false
+    description: openings_position when is_at_risk else 0. Additive convenience column.
+  - name: active_pipeline_applications
+    type: integer
+    nullable: false
+    description: Context only. Never changes the risk band.
+  - name: expected_pipeline_fills
+    type: decimal(10,4)
+    nullable: false
+    description: Capped forecast contribution of this requisition. Context only.
+
+relationships:
+  - {to: dim_date, columns: {thd_date_key: date_key}, cardinality: many_to_one, active: true, role: target_hire_date}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_hiring_constraint, columns: {hiring_constraint_key: hiring_constraint_key}, cardinality: many_to_one, active: true}
+  - {to: ref_risk_band, columns: {risk_band_code: risk_band_code}, cardinality: many_to_one, active: true}
+
+business_rules:
+  - Only open requisitions exist here, so closed and cancelled demand can never reach the risk or constraint visuals.
+  - Risk depends on TOAD and the as-of date only. Pipeline strength is context, never a classification input.
+  - Risk band totals reconcile to Total Open Positions under the same filters.
+  - Constraint mix reconciles to Total Open Positions under the same filters, because each requisition has exactly one constraint.
+  - Never join candidate-level rows to this table in Power BI.
+
+data_quality_tests:
+  - {test: unique, columns: [requisition_key]}
+  - {test: not_null, columns: [requisition_key, thd_date_key, days_to_toad, risk_band_code, is_at_risk, openings_position, hiring_constraint_key]}
+  - {test: accepted_range, columns: [openings_position], min: 1}
+  - {test: expression, expression: "days_to_toad = DATEDIFF(as_of_date, target_offer_acceptance_date)"}
+  - {test: expression, expression: "risk_band_code matches ref_risk_band bounds for days_to_toad", severity: error}
+  - {test: expression, expression: "is_at_risk = (risk_band_code IN ('missed','high_risk','medium_risk'))"}
+  - {test: expression, expression: "at_risk_open_positions = IF(is_at_risk, openings_position, 0)"}
+  - {test: reconciliation, expression: "row count = COUNT(fct_requisition WHERE is_open)", severity: error}
+  - {test: reconciliation, expression: "SUM(openings_position) = SUM(fct_requisition.openings_position WHERE is_open) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(openings_position) grouped by risk band sums to SUM(openings_position) total"}
+
+power_bi:
+  hide_columns: [requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, hiring_constraint_key, risk_band_code, risk_band_sort_order]
+  sort_by: {risk_band_name: risk_band_sort_order}
+  measures:
+    - name: Open Positions (Risk)
+      dax: SUM(mart_exec_risk[openings_position])
+    - name: At-Risk Open Positions
+      dax: SUM(mart_exec_risk[at_risk_open_positions])
+    - name: At-Risk Share of Open
+      dax: DIVIDE([At-Risk Open Positions], [Open Positions (Risk)])
+    - name: At-Risk Requisitions
+      dax: CALCULATE(COUNTROWS(mart_exec_risk), mart_exec_risk[is_at_risk] = TRUE)   -- supporting context only
+  visuals:
+    - KPI card "At-Risk Open Positions" = [At-Risk Open Positions] "of" [Open Positions (Risk)] "open"; delta = [At-Risk Share of Open].
+    - Bars "Open positions by risk band": axis ref_risk_band[risk_band_name], value [Open Positions (Risk)].
+    - Bars "Open positions by primary constraint": axis dim_hiring_constraint[hiring_constraint_short_name], value [Open Positions (Risk)].
+  notes: >
+    [Open Positions (Risk)] must equal mart_exec_demand [Open Positions] in every filter
+    context; add this as a report-level check.

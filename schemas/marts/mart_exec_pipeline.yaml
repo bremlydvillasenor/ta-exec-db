@@ -1,0 +1,121 @@
+dataset: mart_exec_pipeline
+layer: mart
+version: 1.0
+purpose: >
+  Pipeline-health mart behind the "Pipeline Health: Snapshot vs Historical
+  Performance" table. It keeps three populations side by side but separate:
+  the active snapshot (candidates in each stage now), completed historical
+  stage movements (conversion) and completed stage intervals (days in stage).
+  Counts are additive so Power BI can roll them up across segments; medians are
+  row-grain reference values only.
+
+grain: One row per Target Hire Date month + Business Unit + Job Family + Job Level + Recruiting Stage with any activity.
+
+primary_key: [thd_month_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key]
+
+source: >
+  Active snapshot from fct_application (is_active_pipeline, current stage).
+  Historical conversion and days in stage from fct_application_stage_event
+  (is_completed rows). THD month and segment inherited from the requisition.
+
+columns:
+  - name: thd_month_key
+    type: integer
+    nullable: false
+    description: date_key of the first day of the requisition THD month. Active relationship to dim_date.
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: recruiting_stage_key
+    type: integer
+    nullable: false
+  - name: stage_order
+    type: integer
+    nullable: false
+    description: Denormalised from dim_recruiting_stage for sorting.
+  - name: sla_days
+    type: integer
+    nullable: false
+    description: Denormalised from dim_recruiting_stage.
+  # active snapshot (EXEC-10)
+  - name: active_applications
+    type: integer
+    nullable: false
+    description: Active applications whose current stage is this stage, on open requisitions. Snapshot as of the as-of date.
+  - name: median_active_stage_age_days
+    type: decimal(6,1)
+    nullable: true
+    description: Median active_stage_age_days of those applications. Row-grain reference; operational, not a completed duration.
+  # historical conversion (EXEC-11)
+  - name: stage_completed_count
+    type: integer
+    nullable: false
+    description: Completed stage-event rows for this stage (candidate left the stage on or before as-of date).
+  - name: stage_advanced_count
+    type: integer
+    nullable: false
+    description: Of those, rows with advanced_to_next_stage = true.
+  - name: stage_conversion_rate
+    type: decimal(6,4)
+    nullable: true
+    description: stage_advanced_count / stage_completed_count at row grain. Reference value; Power BI recomputes as SUM/SUM.
+  # completed duration (EXEC-12)
+  - name: median_completed_days_in_stage
+    type: decimal(6,1)
+    nullable: true
+    description: Median days_in_stage of completed rows. Row-grain reference; Power BI computes filtered medians from fct_application_stage_event.
+  - name: completed_over_sla_count
+    type: integer
+    nullable: false
+    description: Completed rows with days_in_stage > sla_days. Additive bottleneck indicator.
+
+relationships:
+  - {to: dim_date, columns: {thd_month_key: date_key}, cardinality: many_to_one, active: true, role: target_hire_date month}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_recruiting_stage, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: many_to_one, active: true}
+
+business_rules:
+  - Active volume, historical conversion and completed duration are different populations. Conversion is never computed as active(next stage) / active(this stage).
+  - Candidates still in a stage are excluded from stage_completed_count, so they are never counted as failed conversions.
+  - Active applications can only sit on open requisitions.
+  - Stage-to-acceptance yield is not in this mart; it lives in mart_stage_yield and is applied to fct_application.
+
+data_quality_tests:
+  - {test: unique, columns: [thd_month_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key]}
+  - {test: not_null, columns: [active_applications, stage_completed_count, stage_advanced_count, completed_over_sla_count, sla_days]}
+  - {test: expression, expression: "stage_advanced_count <= stage_completed_count"}
+  - {test: expression, expression: "completed_over_sla_count <= stage_completed_count"}
+  - {test: accepted_range, columns: [stage_conversion_rate], min: 0, max: 1}
+  - {test: expression, expression: "stage_conversion_rate = stage_advanced_count / stage_completed_count", filter: stage_completed_count > 0}
+  - {test: reconciliation, expression: "SUM(active_applications) = COUNT(fct_application WHERE is_active_pipeline) in total and per stage", severity: error}
+  - {test: reconciliation, expression: "SUM(stage_completed_count) = COUNT(fct_application_stage_event WHERE is_completed) in total and per stage", severity: error}
+  - {test: reconciliation, expression: "SUM(stage_advanced_count) = COUNT(fct_application_stage_event WHERE advanced_to_next_stage) in total and per stage"}
+  - {test: reconciliation, expression: "SUM(active_applications) = SUM(fct_requisition.active_pipeline_applications)"}
+
+power_bi:
+  hide_columns: [thd_month_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key, stage_order, stage_conversion_rate, median_completed_days_in_stage, median_active_stage_age_days]
+  measures:
+    - name: Active Now
+      dax: SUM(mart_exec_pipeline[active_applications])
+    - name: Historical Conversion
+      dax: DIVIDE(SUM(mart_exec_pipeline[stage_advanced_count]), SUM(mart_exec_pipeline[stage_completed_count]))
+    - name: Median Completed Days
+      dax: MEDIAN(fct_application_stage_event[days_in_stage])   -- from the fact, honours all slicers
+    - name: Stage SLA Days
+      dax: MAX(dim_recruiting_stage[sla_days])
+    - name: Share Over SLA
+      dax: DIVIDE(SUM(mart_exec_pipeline[completed_over_sla_count]), SUM(mart_exec_pipeline[stage_completed_count]))
+  visuals:
+    - Table rows = dim_recruiting_stage[recruiting_stage_name]; columns = [Active Now] (with data bar), [Historical Conversion], [Median Completed Days], [Stage SLA Days].
+    - Conditional formatting: highlight the stage where [Historical Conversion] is the minimum or [Median Completed Days] > [Stage SLA Days] (the "Watch" call-out).
+  notes: >
+    The THD slicer applies through thd_month_key; Business Unit, Job Family and Job Level
+    apply through their dimensions. Medians come from the stage-event fact.

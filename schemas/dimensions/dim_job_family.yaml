@@ -1,0 +1,61 @@
+dataset: dim_job_family
+layer: dimension
+version: 1.0
+purpose: >
+  Conformed Job Family dimension. It is the Job Family slicer for the Executive
+  Summary and the main segmentation attribute for forecast yield fallback.
+
+grain: One row per Job Family.
+
+primary_key: [job_family_key]
+unique_keys:
+  - [job_family_code]
+
+source: Requisition source system (job attributes on the requisition).
+
+columns:
+  - name: job_family_key
+    type: integer
+    nullable: false
+    description: Surrogate key.
+  - name: job_family_code
+    type: string
+    nullable: false
+    description: Stable natural code (e.g. "SWE").
+  - name: job_family_name
+    type: string
+    nullable: false
+    description: Display name (e.g. "Software Engineering").
+  - name: sort_order
+    type: integer
+    nullable: false
+  - name: is_active
+    type: boolean
+    nullable: false
+
+relationships:
+  - {to: fct_requisition, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: fct_application, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: fct_application_stage_event, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: fct_hire_outcome, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_demand, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_risk, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_pipeline, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_quality, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+  - {to: mart_stage_yield, columns: {job_family_key: job_family_key}, cardinality: one_to_many, active: true}
+
+business_rules:
+  - Job Family is a requisition attribute inherited by applications, stage events and hires.
+  - Include an "Unknown" member (key -1).
+
+data_quality_tests:
+  - {test: unique, columns: [job_family_key]}
+  - {test: unique, columns: [job_family_code]}
+  - {test: not_null, columns: [job_family_key, job_family_code, job_family_name]}
+  - {test: referential_integrity, description: Every job_family_key in facts and marts exists here.}
+
+power_bi:
+  hide_columns: [job_family_key]
+  sort_by: {job_family_name: sort_order}
+  slicer_column: job_family_name
+  notes: Single-direction filter to facts and marts.

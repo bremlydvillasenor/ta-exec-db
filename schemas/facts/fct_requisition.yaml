@@ -1,0 +1,194 @@
+dataset: fct_requisition
+layer: fact
+version: 1.0
+purpose: >
+  Requisition-grain fact holding the as-of reporting state of every requisition:
+  demand (requested positions), delivery (filled positions), open positions,
+  TOAD risk, primary hiring constraint and the capped forecast contribution of
+  the active pipeline. It is the only dataset that carries position quantities,
+  which is what protects them from duplication through candidate-level joins.
+
+grain: One row per requisition, resolved to its state on the as-of date (2026-05-31).
+
+primary_key: [requisition_key]
+unique_keys:
+  - [requisition_id]
+
+source: >
+  Requisition source system (latest snapshot on or before as_of_date). If the
+  source provides multiple snapshots per requisition, the transformation must
+  pick exactly one (latest snapshot_date <= as_of_date) before this fact is built.
+  Pipeline-derived columns come from fct_application and mart_stage_yield.
+
+columns:
+  # keys
+  - name: requisition_key
+    type: integer
+    nullable: false
+    description: Surrogate key.
+  - name: requisition_id
+    type: string
+    nullable: false
+    description: Natural requisition identifier from the source.
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: hiring_constraint_key
+    type: integer
+    nullable: false
+    description: Current primary hiring constraint on the requisition (dim_hiring_constraint).
+  - name: thd_date_key
+    type: integer
+    nullable: false
+    description: date_key of target_hire_date. Active relationship to dim_date (THD role).
+  # status
+  - name: requisition_status
+    type: string
+    nullable: false
+    description: As-of status.
+    accepted_values: [open, filled, cancelled]
+  - name: is_cancelled
+    type: boolean
+    nullable: false
+    description: requisition_status = cancelled. Excluded from every demand, open and risk KPI.
+  - name: is_open
+    type: boolean
+    nullable: false
+    description: requisition_status = open AND openings_position > 0. Only these rows carry risk and forecast values.
+  # dates
+  - name: approval_date
+    type: date
+    nullable: false
+    description: Requisition approval date. Start point of Time to Fill.
+  - name: target_hire_date
+    type: date
+    nullable: false
+    description: Target Hire Date (THD). Primary demand date. May be after the as-of date (through 2027-05-31).
+  - name: target_offer_acceptance_date
+    type: date
+    nullable: false
+    description: Target Offer Acceptance Date (TOAD) exactly as provided by the source. Never recalculated from THD.
+  # quantities
+  - name: requested_positions
+    type: integer
+    nullable: false
+    description: Net active demand on the requisition (seats the business expects TA to fill). Cancelled seats are already removed.
+  - name: filled_positions
+    type: integer
+    nullable: false
+    description: Seats with an accepted offer on or before the as-of date. Reconciles to COUNT of fct_application rows with is_offer_accepted = true.
+  - name: openings_position
+    type: integer
+    nullable: false
+    description: Seats still open on the as-of date, as provided by the source. Requisition-level quantity; never multiplied by candidate rows.
+  - name: cancelled_positions
+    type: integer
+    nullable: false
+    description: Seats removed from demand (partial cancellation). Audit only; not part of requested_positions. Default 0.
+  # risk (open requisitions only)
+  - name: days_to_toad
+    type: integer
+    nullable: true
+    description: target_offer_acceptance_date - as_of_date in days. Populated only when is_open = true.
+    derivation: DATEDIFF(as_of_date, target_offer_acceptance_date) when is_open else null
+  - name: risk_band_code
+    type: string
+    nullable: true
+    description: Band from ref_risk_band applied to days_to_toad. Populated only when is_open = true.
+    accepted_values: [missed, high_risk, medium_risk, on_track, null]
+  - name: is_at_risk
+    type: boolean
+    nullable: true
+    description: true when is_open and days_to_toad <= 14 (missed, high or medium). Null when not open.
+  # pipeline / forecast (open requisitions only)
+  - name: active_pipeline_applications
+    type: integer
+    nullable: false
+    description: COUNT of fct_application rows with is_active_pipeline = true on this requisition. 0 for closed/cancelled requisitions. Context only; never used as a weight.
+  - name: expected_pipeline_fills_uncapped
+    type: decimal(10,4)
+    nullable: true
+    description: SUM(stage_to_acceptance_yield) over active applications on the requisition. Null when not open.
+  - name: expected_pipeline_fills
+    type: decimal(10,4)
+    nullable: true
+    description: LEAST(expected_pipeline_fills_uncapped, openings_position). The requisition-level cap required by the spec. Null when not open; treat as 0 in sums.
+  - name: snapshot_date
+    type: date
+    nullable: false
+    description: Source snapshot date used to resolve this row. Must be <= as_of_date.
+
+relationships:
+  - {to: dim_date, columns: {thd_date_key: date_key}, cardinality: many_to_one, active: true, role: target_hire_date}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+  - {to: dim_hiring_constraint, columns: {hiring_constraint_key: hiring_constraint_key}, cardinality: many_to_one, active: true}
+  - {to: ref_risk_band, columns: {risk_band_code: risk_band_code}, cardinality: many_to_one, active: true}
+  - to: fct_application
+    columns: {requisition_key: requisition_key}
+    cardinality: one_to_many
+    active: false
+    notes: >
+      Logical relationship only. Do not create it in Power BI. Application rows carry the
+      requisition's THD and segment keys, so both facts filter from the same dimensions
+      and position quantities are never joined to candidate rows.
+
+business_rules:
+  - Demand, Positions Filled, Open Positions and Fill Rate are all computed from this table alone.
+  - For non-cancelled requisitions requested_positions = filled_positions + openings_position always holds. A requisition whose remaining seats were withdrawn has those seats moved to cancelled_positions.
+  - requisition_status = filled means openings_position = 0 and filled_positions = requested_positions.
+  - is_open requisitions must have openings_position > 0 and requested_positions > 0.
+  - TOAD is the source value. The transformation may validate it (e.g. TOAD <= THD) but must never overwrite it.
+  - days_to_toad, risk_band_code, is_at_risk and forecast columns exist only for open requisitions so closed demand can never enter risk or forecast KPIs.
+  - expected_pipeline_fills never exceeds openings_position; therefore filled_positions + expected_pipeline_fills never exceeds requested_positions.
+  - No actual event date (approval_date, snapshot_date) may be after as_of_date. Target dates may.
+
+data_quality_tests:
+  - {test: unique, columns: [requisition_key]}
+  - {test: unique, columns: [requisition_id]}
+  - {test: not_null, columns: [requisition_key, requisition_id, requisition_status, approval_date, target_hire_date, target_offer_acceptance_date, requested_positions, filled_positions, openings_position, business_unit_key, job_family_key, job_level_key, hiring_constraint_key, thd_date_key]}
+  - {test: accepted_values, column: requisition_status, values: [open, filled, cancelled]}
+  - {test: accepted_range, columns: [requested_positions, filled_positions, openings_position, cancelled_positions], min: 0}
+  - {test: expression, expression: "filled_positions <= requested_positions"}
+  - {test: expression, expression: "openings_position <= requested_positions"}
+  - {test: expression, expression: "is_cancelled OR requested_positions = filled_positions + openings_position", severity: error}
+  - {test: expression, expression: "is_open = (requisition_status = 'open' AND openings_position > 0)"}
+  - {test: expression, expression: "requisition_status = 'filled' implies openings_position = 0 AND filled_positions = requested_positions"}
+  - {test: expression, expression: "approval_date <= as_of_date AND snapshot_date <= as_of_date"}
+  - {test: expression, expression: "target_hire_date >= approval_date"}
+  - {test: expression, expression: "target_hire_date <= future_thd_end_date"}
+  - {test: expression, expression: "is_open implies (days_to_toad IS NOT NULL AND risk_band_code IS NOT NULL AND is_at_risk IS NOT NULL)"}
+  - {test: expression, expression: "NOT is_open implies (days_to_toad IS NULL AND risk_band_code IS NULL AND expected_pipeline_fills IS NULL)"}
+  - {test: expression, expression: "risk_band_code matches ref_risk_band bounds for days_to_toad"}
+  - {test: expression, expression: "is_at_risk = (days_to_toad <= at_risk_max_days_to_toad)", filter: is_open}
+  - {test: expression, expression: "expected_pipeline_fills <= openings_position", filter: is_open}
+  - {test: expression, expression: "expected_pipeline_fills <= expected_pipeline_fills_uncapped", filter: is_open}
+  - {test: reconciliation, expression: "filled_positions = COUNT(fct_application WHERE requisition_key matches AND is_offer_accepted)", severity: error}
+  - {test: reconciliation, expression: "active_pipeline_applications = COUNT(fct_application WHERE requisition_key matches AND is_active_pipeline)"}
+  - {test: expression, expression: "NOT is_open implies active_pipeline_applications = 0"}
+  - {test: referential_integrity, description: All dimension keys exist in their dimensions.}
+
+power_bi:
+  hide_columns: [requisition_key, business_unit_key, job_family_key, job_level_key, hiring_constraint_key, thd_date_key, snapshot_date]
+  summarization_off: [requisition_key, days_to_toad]
+  measures:
+    - name: Requested Positions
+      dax: SUM(fct_requisition[requested_positions]) with filter fct_requisition[is_cancelled] = FALSE
+    - name: Positions Filled
+      dax: SUM(fct_requisition[filled_positions]) with filter is_cancelled = FALSE
+    - name: Open Positions
+      dax: SUM(fct_requisition[openings_position]) with filter is_open = TRUE
+    - name: Fill Rate
+      dax: DIVIDE([Positions Filled], [Requested Positions])
+  notes: >
+    This is the governed source for all position-quantity measures. The marts
+    (mart_exec_demand, mart_exec_risk) are aggregations/projections of it and must
+    reconcile to it under every supported filter. Never relate this table to
+    fct_application in the model.

@@ -1,0 +1,80 @@
+dataset: dim_recruiting_stage
+layer: dimension
+version: 1.0
+purpose: >
+  Governed recruiting-stage dimension. It defines the ordered stage flow, the
+  next stage each stage converts into, and the stage SLA shown on the pipeline
+  health table. Stage mapping lives here (and only here) so transformation code
+  does not repeat it. The seed rows below are the governed configuration.
+
+grain: One row per recruiting stage.
+
+primary_key: [recruiting_stage_key]
+unique_keys:
+  - [recruiting_stage_code]
+  - [stage_order]
+
+source: Governed seed values in this contract (no external source).
+
+columns:
+  - name: recruiting_stage_key
+    type: integer
+    nullable: false
+    description: Surrogate key.
+  - name: recruiting_stage_code
+    type: string
+    nullable: false
+    description: Stable code used in facts (review, screen, assessment, interview, offer).
+  - name: recruiting_stage_name
+    type: string
+    nullable: false
+    description: Display label (Review, Screen, Assessment, Interview, Offer).
+  - name: stage_order
+    type: integer
+    nullable: false
+    description: Position in the process, 1 = first. Sort column for stage labels.
+  - name: next_stage_code
+    type: string
+    nullable: true
+    description: >
+      The stage a candidate moves into when they convert. Null for the last stage (offer),
+      whose successful exit is an accepted offer rather than another stage.
+  - name: sla_days
+    type: integer
+    nullable: false
+    description: Target maximum completed days in stage. Shown as the "SLA" column on the pipeline table.
+  - name: is_pipeline_stage
+    type: boolean
+    nullable: false
+    description: true for stages that count toward active pipeline volume. All seed rows are true.
+
+seed_rows:
+  - {recruiting_stage_key: 1, recruiting_stage_code: review,     recruiting_stage_name: Review,     stage_order: 1, next_stage_code: screen,     sla_days: 3, is_pipeline_stage: true}
+  - {recruiting_stage_key: 2, recruiting_stage_code: screen,     recruiting_stage_name: Screen,     stage_order: 2, next_stage_code: assessment, sla_days: 4, is_pipeline_stage: true}
+  - {recruiting_stage_key: 3, recruiting_stage_code: assessment, recruiting_stage_name: Assessment, stage_order: 3, next_stage_code: interview,  sla_days: 4, is_pipeline_stage: true}
+  - {recruiting_stage_key: 4, recruiting_stage_code: interview,  recruiting_stage_name: Interview,  stage_order: 4, next_stage_code: offer,      sla_days: 5, is_pipeline_stage: true}
+  - {recruiting_stage_key: 5, recruiting_stage_code: offer,      recruiting_stage_name: Offer,      stage_order: 5, next_stage_code: null,       sla_days: 3, is_pipeline_stage: true}
+
+relationships:
+  - {to: fct_application, columns: {recruiting_stage_key: current_recruiting_stage_key}, cardinality: one_to_many, active: true}
+  - {to: fct_application_stage_event, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: one_to_many, active: true}
+  - {to: mart_exec_pipeline, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: one_to_many, active: true}
+  - {to: mart_stage_yield, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: one_to_many, active: true}
+
+business_rules:
+  - Terminal outcomes (hired, rejected, withdrawn, offer declined, offer rescinded) are application statuses, not stages. A hired application's last stage is offer.
+  - Conversion for a stage is measured against next_stage_code; for offer it is measured against offer acceptance.
+  - Changing the flow means editing seed_rows here, not transformation code.
+
+data_quality_tests:
+  - {test: unique, columns: [recruiting_stage_key]}
+  - {test: unique, columns: [recruiting_stage_code]}
+  - {test: unique, columns: [stage_order]}
+  - {test: not_null, columns: [recruiting_stage_key, recruiting_stage_code, stage_order, sla_days]}
+  - {test: accepted_values, column: next_stage_code, values: [screen, assessment, interview, offer, null]}
+  - {test: expression, expression: "next_stage_code IS NULL only when stage_order = max(stage_order)"}
+
+power_bi:
+  hide_columns: [recruiting_stage_key, next_stage_code]
+  sort_by: {recruiting_stage_name: stage_order}
+  notes: Use recruiting_stage_name as the row axis of the pipeline health table and sla_days as a column value (MAX).

@@ -1,0 +1,107 @@
+dataset: ref_reporting_config
+layer: reference
+version: 1.0
+purpose: >
+  Single-row project configuration. It holds the fixed reporting as-of date,
+  the data coverage window, executive targets and the thresholds that govern
+  cohort maturity, low-volume suppression and forecast fallback. Every
+  transformation reads these values from here; nothing reads the system clock.
+  Power BI loads it as a disconnected table and reads values with MAX().
+
+grain: Exactly one row.
+
+primary_key: [config_id]
+
+source: Governed seed values in this contract.
+
+columns:
+  - name: config_id
+    type: integer
+    nullable: false
+    description: Always 1.
+  - name: config_version
+    type: string
+    nullable: false
+    description: Semantic version of the configuration values.
+  - name: as_of_date
+    type: date
+    nullable: false
+    description: Fixed reporting as-of date. All "today", "open", "days remaining", "latest" and "matured" logic uses this date.
+  - name: history_start_date
+    type: date
+    nullable: false
+    description: First day of actual recruiting activity.
+  - name: history_end_date
+    type: date
+    nullable: false
+    description: Last day of actual recruiting activity. Equal to as_of_date.
+  - name: future_thd_end_date
+    type: date
+    nullable: false
+    description: Latest Target Hire Date preserved for future demand.
+  - name: fill_rate_target
+    type: decimal(5,4)
+    nullable: false
+    description: Executive Fill Rate target shown on the KPI card and trend (0.90).
+  - name: early_attrition_60d_target
+    type: decimal(5,4)
+    nullable: false
+    description: Configured quality target for 60-Day Early Attrition. Placeholder value; rates at or below target are "on target".
+  - name: attrition_window_days
+    type: integer
+    nullable: false
+    description: Observation window for early attrition (60).
+  - name: quality_rolling_cohort_count
+    type: integer
+    nullable: false
+    description: Number of fully matured start cohorts aggregated in the quality KPI (12).
+  - name: min_cohort_size
+    type: integer
+    nullable: false
+    description: Minimum matured hires for a monthly attrition point to be shown without a low-volume flag.
+  - name: at_risk_max_days_to_toad
+    type: integer
+    nullable: false
+    description: Upper bound of days_to_toad for the At-Risk definition (14). Must match ref_risk_band.
+  - name: forecast_min_segment_observations
+    type: integer
+    nullable: false
+    description: Minimum historical observations for a segment-level stage yield before falling back to a broader segment.
+
+seed_rows:
+  - config_id: 1
+    config_version: "1.0.0"
+    as_of_date: 2026-05-31
+    history_start_date: 2024-01-01
+    history_end_date: 2026-05-31
+    future_thd_end_date: 2027-05-31
+    fill_rate_target: 0.90
+    early_attrition_60d_target: 0.08
+    attrition_window_days: 60
+    quality_rolling_cohort_count: 12
+    min_cohort_size: 30
+    at_risk_max_days_to_toad: 14
+    forecast_min_segment_observations: 30
+
+relationships: []
+
+business_rules:
+  - Changing as_of_date and re-running the pipeline is the only supported way to move the reporting date.
+  - history_end_date must equal as_of_date; actual events after it are a hard failure.
+  - Targets are reference values for comparison only; they are never stored inside marts.
+
+data_quality_tests:
+  - {test: row_count_equals, value: 1}
+  - {test: not_null, columns: [as_of_date, fill_rate_target, early_attrition_60d_target, attrition_window_days, quality_rolling_cohort_count]}
+  - {test: expression, expression: "history_start_date < history_end_date"}
+  - {test: expression, expression: "history_end_date = as_of_date"}
+  - {test: expression, expression: "future_thd_end_date > as_of_date"}
+  - {test: accepted_range, columns: [fill_rate_target, early_attrition_60d_target], min: 0, max: 1}
+
+power_bi:
+  disconnected_table: true
+  hide_table: false
+  notes: >
+    Read values in measures with MAX(ref_reporting_config[fill_rate_target]) etc.
+    Do not relate this table to anything. The as-of stamp on the page header is
+    MAX(ref_reporting_config[as_of_date]).

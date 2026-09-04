@@ -1,0 +1,124 @@
+dataset: mart_exec_quality
+layer: mart
+version: 1.0
+purpose: >
+  Hiring-quality mart behind the 60-Day Early Attrition KPI and the Speed vs
+  60-Day Early Attrition dual-axis chart. It aggregates fct_hire_outcome by
+  employee start cohort month and segment, carries the additive counts needed for
+  the weighted rolling-12 KPI, and stores the same-cohort median Time to Fill as a
+  row-grain reference value. Immature cohorts are present but flagged so they are
+  never used in the KPI or trend.
+
+grain: One row per employee start cohort month + Business Unit + Job Family + Job Level with at least one started hire.
+
+primary_key: [cohort_month_key, business_unit_key, job_family_key, job_level_key]
+
+source: fct_hire_outcome aggregated by cohort_month_key and segment; cohort flags from dim_start_cohort.
+
+columns:
+  - name: cohort_month_key
+    type: integer
+    nullable: false
+    description: yyyymm. Active relationship to dim_start_cohort (never to dim_date).
+  - name: cohort_start_month
+    type: date
+    nullable: false
+    description: First day of the start month, for readability.
+  - name: business_unit_key
+    type: integer
+    nullable: false
+  - name: job_family_key
+    type: integer
+    nullable: false
+  - name: job_level_key
+    type: integer
+    nullable: false
+  - name: is_fully_matured_start_month
+    type: boolean
+    nullable: false
+    description: Denormalised from dim_start_cohort. Only true rows feed the KPI and trend.
+  - name: kpi_cohort_window
+    type: string
+    nullable: false
+    description: Denormalised from dim_start_cohort (latest_12 / prior_12 / outside).
+    accepted_values: [latest_12, prior_12, outside]
+  - name: started_hires
+    type: integer
+    nullable: false
+    description: All hires who started in the cohort month (matured or not). Reconciliation only.
+  - name: matured_hires_60d
+    type: integer
+    nullable: false
+    description: Hires in the cell when is_fully_matured_start_month = true, else 0. KPI denominator and cohort sample size (n shown under each chart point).
+  - name: early_attrition_60d_count
+    type: integer
+    nullable: false
+    description: matured hires with is_60_day_early_attrition = true. KPI numerator.
+  - name: early_attrition_60d_rate
+    type: decimal(6,4)
+    nullable: true
+    description: early_attrition_60d_count / matured_hires_60d at row grain. Reference value; Power BI recomputes as SUM/SUM. Null for immature rows.
+  - name: median_time_to_fill_days_same_cohort
+    type: decimal(6,1)
+    nullable: true
+    description: Median time_to_fill_days of the matured hires in this cell. Row-grain reference; Power BI computes filtered medians from fct_hire_outcome.
+  - name: is_low_volume_cohort
+    type: boolean
+    nullable: false
+    description: matured_hires_60d < ref_reporting_config.min_cohort_size at row grain. Power BI should re-evaluate at visual grain using SUM(matured_hires_60d).
+
+relationships:
+  - {to: dim_start_cohort, columns: {cohort_month_key: cohort_month_key}, cardinality: many_to_one, active: true, role: employee_start_cohort}
+  - {to: dim_business_unit, columns: {business_unit_key: business_unit_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_family, columns: {job_family_key: job_family_key}, cardinality: many_to_one, active: true}
+  - {to: dim_job_level, columns: {job_level_key: job_level_key}, cardinality: many_to_one, active: true}
+
+business_rules:
+  - Date basis is employee start month. No relationship to dim_date, so the THD slicer cannot reach this table.
+  - The KPI is a weighted aggregate: SUM(early_attrition_60d_count) / SUM(matured_hires_60d) over rows where kpi_cohort_window = latest_12. It is never the average of the twelve monthly rates.
+  - The trend shows only rows with kpi_cohort_window = latest_12 (12 fully matured cohorts). The prior_12 window supports the period-over-period comparison.
+  - Speed and quality on the chart come from the same hires: median Time to Fill uses the matured hires of the cohort, not THD-based accepted offers.
+  - The chart is diagnostic association, not causation.
+
+data_quality_tests:
+  - {test: unique, columns: [cohort_month_key, business_unit_key, job_family_key, job_level_key]}
+  - {test: not_null, columns: [cohort_month_key, is_fully_matured_start_month, kpi_cohort_window, started_hires, matured_hires_60d, early_attrition_60d_count]}
+  - {test: expression, expression: "early_attrition_60d_count <= matured_hires_60d"}
+  - {test: expression, expression: "matured_hires_60d <= started_hires"}
+  - {test: expression, expression: "NOT is_fully_matured_start_month implies matured_hires_60d = 0 AND early_attrition_60d_count = 0 AND early_attrition_60d_rate IS NULL"}
+  - {test: expression, expression: "is_fully_matured_start_month implies matured_hires_60d = started_hires"}
+  - {test: accepted_range, columns: [early_attrition_60d_rate], min: 0, max: 1}
+  - {test: expression, expression: "early_attrition_60d_rate = early_attrition_60d_count / matured_hires_60d", filter: matured_hires_60d > 0}
+  - {test: reconciliation, expression: "flags equal dim_start_cohort values for cohort_month_key"}
+  - {test: reconciliation, expression: "SUM(started_hires) = COUNT(fct_hire_outcome) in total and per cohort", severity: error}
+  - {test: reconciliation, expression: "SUM(early_attrition_60d_count) = COUNT(fct_hire_outcome WHERE is_fully_matured_start_month AND is_60_day_early_attrition)", severity: error}
+  - {test: reconciliation, expression: "COUNT DISTINCT cohort_month_key WHERE kpi_cohort_window = 'latest_12' = 12"}
+
+power_bi:
+  hide_columns: [cohort_month_key, business_unit_key, job_family_key, job_level_key, early_attrition_60d_rate, median_time_to_fill_days_same_cohort, is_low_volume_cohort]
+  measures:
+    - name: Matured Hires 60d
+      dax: SUM(mart_exec_quality[matured_hires_60d])
+    - name: Early Exits 60d
+      dax: SUM(mart_exec_quality[early_attrition_60d_count])
+    - name: 60-Day Early Attrition
+      dax: DIVIDE([Early Exits 60d], [Matured Hires 60d])
+    - name: 60-Day Early Attrition (KPI)
+      dax: CALCULATE([60-Day Early Attrition], dim_start_cohort[kpi_cohort_window] = "latest_12")
+    - name: 60-Day Early Attrition (Prior 12)
+      dax: CALCULATE([60-Day Early Attrition], dim_start_cohort[kpi_cohort_window] = "prior_12")
+    - name: Early Attrition Target
+      dax: MAX(ref_reporting_config[early_attrition_60d_target])
+    - name: Latest Matured Cohort
+      dax: CALCULATE(MAX(dim_start_cohort[cohort_month_label]), dim_start_cohort[is_latest_fully_matured_cohort] = TRUE)
+    - name: Median Time to Fill (Start Cohort)
+      dax: CALCULATE(MEDIAN(fct_hire_outcome[time_to_fill_days]), fct_hire_outcome[is_fully_matured_start_month] = TRUE)
+    - name: Is Low Volume Cohort
+      dax: "[Matured Hires 60d] < MAX(ref_reporting_config[min_cohort_size])"
+  visuals:
+    - KPI card "60-Day Early Attrition" = [60-Day Early Attrition (KPI)] vs [Early Attrition Target]; footer = [Early Exits 60d] / [Matured Hires 60d] and [Latest Matured Cohort].
+    - Dual-axis line chart, x = dim_start_cohort[cohort_month_label], visual filter kpi_cohort_window = "latest_12"; left axis [Median Time to Fill (Start Cohort)], right axis [60-Day Early Attrition]; tooltip/data label [Matured Hires 60d]; use [Is Low Volume Cohort] for conditional formatting or suppression.
+  notes: >
+    Both quality visuals must be excluded from the THD slicer, which happens naturally
+    because neither this mart nor dim_start_cohort relates to dim_date. Business Unit,
+    Job Family and Job Level slicers still apply.

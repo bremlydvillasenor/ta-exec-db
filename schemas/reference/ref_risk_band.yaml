@@ -1,0 +1,71 @@
+dataset: ref_risk_band
+layer: reference
+version: 1.0
+purpose: >
+  Governed classification rules for open-position risk based on days to the
+  source Target Offer Acceptance Date (TOAD). The transformation applies these
+  rows to every open requisition; Power BI uses the same rows for band labels
+  and sort order.
+
+grain: One row per risk band.
+
+primary_key: [risk_band_key]
+unique_keys:
+  - [risk_band_code]
+
+source: Governed seed values in this contract (spec EXEC-07).
+
+columns:
+  - name: risk_band_key
+    type: integer
+    nullable: false
+  - name: risk_band_code
+    type: string
+    nullable: false
+    description: Stable code used in fct_requisition and mart_exec_risk.
+  - name: risk_band_name
+    type: string
+    nullable: false
+    description: Display label.
+  - name: min_days_to_toad
+    type: integer
+    nullable: true
+    description: Inclusive lower bound. Null means no lower bound.
+  - name: max_days_to_toad
+    type: integer
+    nullable: true
+    description: Inclusive upper bound. Null means no upper bound.
+  - name: is_at_risk
+    type: boolean
+    nullable: false
+    description: true for bands that count toward At-Risk Open Positions (Missed, High Risk, Medium Risk).
+  - name: sort_order
+    type: integer
+    nullable: false
+    description: Most urgent first.
+
+seed_rows:
+  - {risk_band_key: 1, risk_band_code: missed,      risk_band_name: Missed,      min_days_to_toad: null, max_days_to_toad: -1,   is_at_risk: true,  sort_order: 1}
+  - {risk_band_key: 2, risk_band_code: high_risk,   risk_band_name: High Risk,   min_days_to_toad: 0,    max_days_to_toad: 7,    is_at_risk: true,  sort_order: 2}
+  - {risk_band_key: 3, risk_band_code: medium_risk, risk_band_name: Medium Risk, min_days_to_toad: 8,    max_days_to_toad: 14,   is_at_risk: true,  sort_order: 3}
+  - {risk_band_key: 4, risk_band_code: on_track,    risk_band_name: On Track,    min_days_to_toad: 15,   max_days_to_toad: null, is_at_risk: false, sort_order: 4}
+
+relationships:
+  - {to: fct_requisition, columns: {risk_band_code: risk_band_code}, cardinality: one_to_many, active: true, notes: Only open requisitions carry a band.}
+  - {to: mart_exec_risk, columns: {risk_band_code: risk_band_code}, cardinality: one_to_many, active: true}
+
+business_rules:
+  - Bands are contiguous and non-overlapping over all integers; every open requisition maps to exactly one band.
+  - Risk depends only on TOAD and the as-of date. Pipeline strength never changes the band.
+  - The value reported per band is SUM(openings_position), never a requisition count.
+
+data_quality_tests:
+  - {test: unique, columns: [risk_band_key]}
+  - {test: unique, columns: [risk_band_code]}
+  - {test: expression, expression: "bands cover every integer exactly once (no gap, no overlap)"}
+  - {test: expression, expression: "max(max_days_to_toad where is_at_risk) = ref_reporting_config.at_risk_max_days_to_toad"}
+
+power_bi:
+  hide_columns: [risk_band_key, min_days_to_toad, max_days_to_toad]
+  sort_by: {risk_band_name: sort_order}
+  notes: Use risk_band_name as the axis of the "Open positions by risk band" bars; value = Open Positions measure from mart_exec_risk.
