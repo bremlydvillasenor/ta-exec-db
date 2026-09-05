@@ -217,8 +217,36 @@ figure in this specification is a count of applications, which is what keeps acc
 events, filled positions, and started positions reconcilable at requisition grain.
 
 Multiple offer versions before final acceptance — a revised salary, a moved start date, a
-re-issued offer letter — are offer *versions*, not separate acceptance events, and must be
-resolved upstream to the single governed acceptance date.
+re-issued offer letter — are offer *versions*, not separate acceptance events. The
+resolution rule is:
+
+1. **Collapse administrative revisions of the same accepted offer.** A corrected salary, a
+   moved start date or a re-issued letter for the offer the candidate accepted are versions
+   of one event and must not produce a second acceptance.
+2. **Preserve the earliest valid acceptance event for the accepted offer cycle.** The
+   governed acceptance date is the moment the candidate committed, not the date of the last
+   piece of paperwork.
+3. **Quarantine ambiguous multiple-acceptance cases for review.** An application carrying
+   more than one distinct acceptance cycle that cannot be resolved as revisions of a single
+   offer is held for review — never silently collapsed, and never silently dropped.
+4. **Audit the source, not only the output — and do not fail on legitimate revisions.**
+   Multiple accepted offer versions on one source application are *expected*: rule 1 exists
+   because they occur. Their presence must never fail the build on its own. The
+   implementation must materialise an **audit model** recording every source application
+   that arrived with more than one accepted offer version, together with how it was
+   resolved — `administrative_revision` or `quarantined` — and why. A uniqueness test on the
+   resolved output only proves that the resolution ran; the audit model is what shows
+   whether a real second acceptance was discarded.
+5. **Fail hard on the three cases that mean something is wrong.** The build must fail when
+   a multi-version application is **missing from the audit model** — it was never classified
+   at all, and no test that reads the model's rows can see it; when a recorded application
+   is resolved as neither administrative revisions nor quarantined, so nobody can say what
+   happened to it; and when an application marked quarantined reaches the final application
+   fact. Quarantined applications are reviewed by a person before anything counts them. The
+   *number* of multi-version applications is reported for visibility and never gated on.
+6. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
+
+The resolution rule must be documented where it is applied.
 
 A genuine re-offer cycle, where the same candidate accepts, is lost to a rescind or renege,
 and is later re-offered and accepts again for the same requisition, is out of scope for the
@@ -838,10 +866,16 @@ required for hiring-quality analysis.
 **Cardinality assumption.** The columns above describe a single acceptance event, so one
 application must contribute at most one governed accepted-offer event. Where the source
 holds several offer versions for one application before final acceptance, the transformation
-must resolve them to one acceptance — normally the earliest acceptance date of the offer the
-candidate actually accepted — and the resolution rule must be documented where it is applied.
-A source application carrying more than one accepted offer version must be resolved or
-rejected, never loaded as-is.
+must collapse administrative revisions of the accepted offer and preserve the earliest valid
+acceptance event of that cycle, as set out in section 5.4. An application carrying more than
+one distinct acceptance cycle that cannot be resolved this way must be quarantined for
+review, never loaded as-is and never silently collapsed. Multiple accepted offer versions in
+the source are expected and must not fail the build by themselves; instead, an audit model
+must record every application that arrived with more than one accepted version and how it
+was resolved. The hard failures are narrower: a multi-version application missing from that
+audit model, one recorded but left neither resolved nor quarantined, or a quarantined
+application reaching the application fact. The
+resolution rule must be documented where it is applied.
 
 If future requirements need multiple acceptance or re-offer cycles for a single application,
 introduce a **separate offer-event fact** — one row per offer event, with an offer sequence
@@ -1061,7 +1095,9 @@ requested_positions = filled_positions + openings_position
 7. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
 8. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
 9. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
-10. One application must carry at most one governed accepted-offer event. Multiple source offer versions before final acceptance must be resolved upstream to a single acceptance date; an application arriving with more than one accepted offer version must be resolved or rejected, not loaded as-is.
+10. One application must carry at most one governed accepted-offer event. Administrative revisions of the accepted offer are collapsed and the earliest valid acceptance event of that cycle is preserved. An application with more than one distinct acceptance cycle is quarantined for review, not loaded as-is and not silently collapsed.
+11. An audit model must record every source application arriving with more than one accepted offer version, with its resolution (`administrative_revision` or `quarantined`). Multiple accepted versions are valid, and their count alone is never a failure; it is reported for visibility. The uniqueness test on the resolved output proves only that the resolution ran, not that it was correct.
+12. Three hard tests must fail the build: any multi-version application absent from the audit model, any audit row whose resolution is neither `administrative_revision` nor `quarantined`, and any quarantined application appearing in the application fact. The first is required because a missing application is invisible to the other two.
 
 ### Pipeline rules
 
@@ -1125,12 +1161,57 @@ The completed analytics project should provide:
 
 ### Engineering requirements
 
-- Python project managed with `uv`
-- deterministic configuration for the as-of date
-- modular transformations rather than one monolithic script
-- clear source / intermediate / fact / mart separation
+#### Repository boundary
+
+This repository is the **contract**. It defines the required grains, columns, metrics,
+business rules, validation tests and the downstream dbt architecture. It contains no
+executable pipeline code.
+
+| Repository | Owns |
+|---|---|
+| **This repository (`ta-exec-db`)** | The dashboard specification, the wireframe, the governed metric definitions, the analytics dataset contracts, and the dbt architecture the implementation must follow |
+| **Separate implementation repository** | Python synthetic-source generation, the dbt models, the executable tests, orchestration, and production of the CSV / Parquet outputs |
+| **Power BI** | Consuming the validated outputs, and owning filter-responsive ratios, medians and presentation |
+
+The dbt architecture described in this specification and in `dbt-ownership.md` is a
+**required downstream implementation contract**. It is not a set of files that exist here.
+
+#### Layer ownership
+
+Each layer owns one kind of work. Governed business logic must not be independently
+reimplemented across layers: one definition, in one place, that the others consume.
+Reference calculations may legitimately appear in more than one place — marts store
+row-grain rates and medians so a build can prove the mart and the fact agree — but those
+are validation values, and the figure the report presents is still calculated once, by the
+layer that owns it.
+
+| Layer | Owns | Must not do |
+|---|---|---|
+| **Python** | Source generation: creating the synthetic ATS and HR records that simulate the source systems | Decide what a record means. Python may invent an offer acceptance date; it may not decide whether that acceptance is still an active fill |
+| **dbt** | Every transformation between source and mart: grain resolution, row-level derivations, classifications, roll-ups, the forecast, and all validation tests | Store final rates or medians as the values the report presents |
+| **Power BI** | Semantic aggregation under the user's filter context, and presentation | Re-implement any business rule, or recreate a count that requires a fact-to-fact relationship |
+
+The decisive test for a calculation: if it needs the configured as-of date, a grain the
+report model cannot reach, or a rule that must be identical in every visual, it belongs in
+dbt. If it is dividing two additive columns or taking a median over a governed row-level
+column in the current filter context, it belongs in Power BI.
+
+`dbt-ownership.md` holds the full review and the model-by-model recommendation.
+
+#### Requirements on the implementation
+
+These are requirements this specification places on the separate implementation
+repository.
+
+- Python project managed with `uv` for synthetic-source generation
+- dbt project for all transformations, contracts and tests, following the dependency flow
+  in `schemas/README.md`
+- deterministic configuration for the as-of date, read from `ref_reporting_config`; no layer reads the system clock
+- governed vocabulary held as seeds (recruiting stages, risk bands, hiring constraints) and referenced by models, never hard-coded in transformation code
+- clear source / staging / intermediate / fact / mart separation, with the dependency order derived from the model graph rather than maintained by hand
+- the business rules in section 12 implemented as executable tests, including custom tests for the reconciliation and temporal rules that generic tests cannot express
+- CSV or Parquet outputs produced for Power BI, matching the schema contracts in `schemas/`
 - logging
-- validation tests
 - repeatable execution
 
 The implementation should favor simplicity and readability over unnecessary framework complexity.
@@ -1168,7 +1249,7 @@ The Executive Summary data project is complete when all of the following are tru
 5. Fill Rate reconciles from requested, filled, and open position quantities, where filled means active fills.
 6. Offer acceptance, active fill, and hire are modelled as three separate concepts; no metric is defined from an application status value.
 7. `offer_accepted_date` is preserved after an employer rescind or a candidate renege, and a seat lost after acceptance is restated as open.
-8. One application contributes at most one governed accepted-offer event, multiple offer versions are resolved upstream, and the limitation plus its remedy (a separate offer-event fact) are documented.
+8. One application contributes at most one governed accepted-offer event: administrative revisions are collapsed, the earliest valid acceptance of the accepted cycle is preserved, ambiguous multiple-acceptance cases are quarantined for review, an audit model records every source application with multiple accepted versions and how it was resolved, the build fails on an unrecorded multi-version application, an unclassified one, or a quarantined application reaching the fact, and the limitation plus its remedy (a separate offer-event fact) are documented.
 9. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
 10. Open-position risk is based on source TOAD and the configured as-of date.
 11. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.

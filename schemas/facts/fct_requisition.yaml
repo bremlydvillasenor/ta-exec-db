@@ -212,7 +212,7 @@ data_quality_tests:
   - {test: expression, expression: "is_open implies (days_to_toad IS NOT NULL AND risk_band_code IS NOT NULL AND is_at_risk IS NOT NULL)"}
   - {test: expression, expression: "NOT is_open implies (days_to_toad IS NULL AND risk_band_code IS NULL AND expected_pipeline_fills IS NULL)"}
   - {test: expression, expression: "risk_band_code matches ref_risk_band bounds for days_to_toad"}
-  - {test: expression, expression: "is_at_risk = (days_to_toad <= at_risk_max_days_to_toad)", filter: is_open}
+  - {test: expression, expression: "is_at_risk = ref_risk_band.is_at_risk for the band matching days_to_toad", filter: is_open, notes: Derived from the seed by range join. There is no separate configured threshold to compare against.}
   - {test: expression, expression: "expected_pipeline_fills <= openings_position", filter: is_open}
   - {test: expression, expression: "expected_pipeline_fills <= expected_pipeline_fills_uncapped", filter: is_open}
   - {test: reconciliation, expression: "filled_positions = COUNT(fct_application WHERE requisition_key matches AND is_active_fill)", severity: error}
