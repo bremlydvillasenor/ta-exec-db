@@ -173,14 +173,31 @@ first establish what the source versions actually mean, then apply the rule in t
 
 **dbt approach:** deduplicate with `qualify row_number() over (partition by application_id
 order by offer_accepted_date, offer_version)` after the revision-collapsing logic, not
-instead of it. Two tests are needed, not one:
+instead of it. Then build an **audit model** — `audit_offer__multi_accepted_version` — with
+one row per source application that arrived with more than one accepted version:
 
-- a `unique` test on `application_id` in the resolved output, which proves the grain holds;
-- an **audit test on the source** counting applications with more than one distinct
-  accepted offer version, materialised with `store_failures: true`.
+| Column | Meaning |
+|---|---|
+| `application_id` | the affected application |
+| `accepted_version_count` | how many accepted versions the source delivered |
+| `resolution` | `administrative_revision` or `quarantined` |
+| `resolution_notes` | why, for quarantined rows |
 
-The second test is the one that matters. A unique test on the output only proves the
-deduplication ran — it cannot tell you whether it discarded a real second acceptance.
+This model is expected to hold rows in normal operation. Collapsing administrative revisions
+is the *designed* behaviour, so a count of multi-version applications must never fail a build
+on its own — a test with `severity: error` on that count would break every run in which a
+recruiter corrected a salary. Materialise it as a table and let people read it.
+
+Three tests then sit on top of it, and only two of them are hard:
+
+| Test | Severity | What it catches |
+|---|---|---|
+| `unique` on `application_id` in the resolved output | error | the resolution ran and the grain holds |
+| `resolution IN ('administrative_revision','quarantined')` on every audit row | error | an **unclassified** multi-version application — the logic did not cover the case, so nobody can say whether a real second acceptance was discarded |
+| no `quarantined` `application_id` appears in `fct_application` | error | an unresolved acceptance being counted as a seat |
+
+Add a `store_failures: true` audit count as a `warn` for visibility if you like, but the
+gate is the pair above. A unique test on the output alone only proves the deduplication ran.
 
 ---
 
@@ -390,10 +407,21 @@ Note what is **not** in this list: the At-Risk threshold. Risk classification is
 entirely by the `ref_risk_band` seed (see 4.7). Configuration holds values that have no
 other home; it does not hold a second copy of a rule a seed already defines.
 
-**Recommended pattern:** put these in `dbt_project.yml` under `vars`, so macros and models
-can read them at parse time, and build `ref_reporting_config` as a **one-row model** that
-selects those vars. One source of truth, and Power BI still gets the disconnected config
-table it expects.
+**Required pattern:** put these in `dbt_project.yml` under `vars`, so macros and models can
+read them at parse time, and build `ref_reporting_config` as a **one-row model** that selects
+those vars:
+
+```
+dbt_project.yml vars  ->  ref_reporting_config (one-row model)  ->  disconnected Power BI
+                                                                     configuration table
+```
+
+The direction matters. A macro like `{{ as_of_date() }}` is resolved while dbt compiles the
+project, before any table exists, so it cannot read a seed — the values have to be available
+as vars. Building `ref_reporting_config` as a seed *as well* would put the same numbers in
+two places, which is the pattern this document argues against everywhere else. The contract
+in `schemas/reference/ref_reporting_config.yaml` states this explicitly, and its
+`configured_values` block is the expected output row of that model, not a CSV to load.
 
 Add a macro `{{ as_of_date() }}` and a CI check that fails if `current_date`, `getdate` or
 `now()` appears anywhere in `models/`. That is what makes "running the pipeline in the
@@ -511,6 +539,7 @@ models/
   intermediate/
     int_requisition__resolved_snapshot.sql   # one row per requisition
     int_offer__resolved_acceptance.sql       # one governed acceptance per application
+    audit_offer__multi_accepted_version.sql  # applications with >1 accepted version + resolution
     int_application__events.sql              # event and state flags, Time to Fill
     int_stage_event__sequenced.sql           # windowing, conversion, days in stage
     int_requisition__pipeline_rollup.sql     # application counts back to requisition grain
@@ -616,7 +645,7 @@ models come early; the two final facts close after the yield.
 | Phase | Build | Why here |
 |---|---|---|
 | 1 | Seeds, `ref_reporting_config`, `dim_date`, `dim_start_cohort`, the `as_of_date` macro | Reproducibility and cohort maturity are the foundation everything else assumes |
-| 2 | Staging models, `int_requisition__resolved_snapshot`, `int_offer__resolved_acceptance` with its source audit test | Fixes the grain before anything counts it |
+| 2 | Staging models, `int_requisition__resolved_snapshot`, `int_offer__resolved_acceptance` with `audit_offer__multi_accepted_version` | Fixes the grain before anything counts it |
 | 3 | `int_application__events`, `int_stage_event__sequenced`, `fct_application_stage_event`, with the event/state and conversion tests | The vocabulary guarantees and stage conversion become executable. This phase builds the **intermediate application model** and the stage-event fact; the requisition side is still only the resolved snapshot from phase 2, and neither final fact is built yet |
 | 4 | `mart_stage_yield` | Training needs a tested `is_active_fill` flag and sequenced stage events, and nothing else |
 | 5 | `fct_application` with the applied yield, `int_requisition__pipeline_rollup`, then `fct_requisition` with the roll-ups, risk band and capped forecast | The point where the two final facts can close, because the yield now exists |

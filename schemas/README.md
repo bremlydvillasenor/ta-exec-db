@@ -88,11 +88,17 @@ resolution rule is:
 3. **Quarantine ambiguous multiple-acceptance cases for review.** An application carrying
    more than one distinct acceptance cycle that cannot be resolved as revisions of a single
    offer is held for review — never silently collapsed, and never silently dropped.
-4. **Audit the source, not only the output.** A source-level test must count applications
-   arriving with more than one accepted offer version. A uniqueness test on the resolved
-   output only proves that the resolution ran; it cannot show whether a real second
-   acceptance was discarded.
-5. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
+4. **Audit the source, not only the output — and do not fail on legitimate revisions.**
+   Multiple accepted offer versions on one source application are *expected*: rule 1 exists
+   because they occur, so their presence must never fail a build on its own. An **audit
+   model** must record every source application that arrived with more than one accepted
+   version, with its resolution — `administrative_revision` or `quarantined` — and why. A
+   uniqueness test on the resolved output only proves that the resolution ran; the audit
+   model is what shows whether a real second acceptance was discarded.
+5. **Fail hard only on the two cases that mean something is wrong.** A multi-version
+   application left neither resolved nor quarantined, and a quarantined application reaching
+   `fct_application`. Everything else the audit model simply records.
+6. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
 
 Resolution happens **upstream**, at the resolved-sources stage of the dependency flow,
 before anything counts an acceptance. The rule must be documented where it is applied.
@@ -121,7 +127,7 @@ in `facts/fct_application.yaml` under `assumptions.one_acceptance_per_applicatio
 | dimension | `dim_recruiting_stage` | one row per stage (Review to Offer) | 5 | Governed stage order, next stage and SLA days (seed rows in the YAML) |
 | dimension | `dim_hiring_constraint` | one row per constraint category | 7 | Governed labels and order for the constraint bars (seed rows in the YAML) |
 | dimension | `dim_start_cohort` | one row per employee start month, Jan 2024 to May 2026 | 29 | Cohort axis for quality visuals; owns maturity and rolling-12 window logic |
-| reference | `ref_reporting_config` | exactly one row | 1 | As-of date, coverage window, targets, thresholds |
+| reference | `ref_reporting_config` | exactly one row | 1 | As-of date, coverage window, targets, thresholds (one-row model over project variables, not a seed) |
 | reference | `ref_risk_band` | one row per TOAD risk band | 4 | Missed / High / Medium / On Track rules and sort order |
 | fact | `fct_requisition` | one row per requisition, as-of state | thousands | Demand, active fills, accepted-offer events, post-acceptance losses, starts, open, TOAD risk, constraint, capped forecast fills |
 | fact | `fct_application` | one row per application, as-of state | tens of thousands | Active pipeline snapshot, current status, immutable offer-acceptance event, withdraw / decline / rescind / renege / start events, Time to Fill, candidate yield |
@@ -237,10 +243,12 @@ resolved sources
 
 Stage by stage:
 
-0. **Configuration and governed seeds** — `ref_reporting_config` and `ref_risk_band`, plus
-   the `dim_recruiting_stage` and `dim_hiring_constraint` seed rows. Then `dim_date` and
-   `dim_start_cohort` generated from the configuration, and `dim_business_unit`,
-   `dim_job_family`, `dim_job_level` from source.
+0. **Configuration and governed seeds** — `ref_risk_band`, `dim_recruiting_stage` and
+   `dim_hiring_constraint` are seeds. `ref_reporting_config` is not: its values are declared
+   as project variables and selected into a one-row model, because compile-time macros such
+   as `as_of_date()` cannot read a seed table. Then `dim_date` and `dim_start_cohort`
+   generated from the configuration, and `dim_business_unit`, `dim_job_family`,
+   `dim_job_level` from source.
 1. **Resolved sources** — one row per requisition (the latest source snapshot on or before
    the as-of date) and one governed accepted-offer event per application. Offer-version
    resolution belongs here, before anything counts an acceptance.
