@@ -83,7 +83,11 @@ every level of a report hierarchy, silently.
 
 ## 4. Recommended dbt scope
 
-Ranked by how much damage the calculation does if it is left in Python or Power BI.
+Ranked by how much damage the calculation does if it is left in Python or Power BI. The
+first three are equally foundational and none of them is optional: cohort maturity decides
+who is even eligible for the quality KPI, offer resolution decides the grain every
+offer-based count depends on, and the event and state flags decide what each count means.
+A weakness in any one of them invalidates the others.
 
 ### 4.1 Cohort maturity and the rolling-12 window (`dim_start_cohort`)
 
@@ -126,11 +130,34 @@ depends on it — rests on this model.
 `accepted_offer_events = filled_positions + lost_after_acceptance_positions` breaks, and
 Fill Rate can exceed 100% for a business unit.
 
-**dbt approach:** `qualify row_number() over (partition by application_id order by
-offer_accepted_date, offer_version)` with a `unique` test on `application_id`. Add a
-separate audit model listing applications that arrived with more than one accepted
-version, materialised with `store_failures: true` so rejected rows are visible instead of
-silently dropped.
+**The resolution rule.** Do not simply take the earliest accepted version. The model must
+first establish what the source versions actually mean, then apply the rule in this order:
+
+1. **Preserve the earliest valid acceptance event for the offer cycle that was ultimately
+   accepted.** The governed acceptance date is the moment the candidate committed, not the
+   date of the last paperwork.
+2. **Collapse administrative revisions of that same accepted offer** — a corrected salary,
+   a moved start date, a re-issued letter. These are versions of one event and must not
+   create a second acceptance.
+3. **Quarantine ambiguous cases**, where an application carries more than one distinct
+   acceptance cycle that cannot be resolved as revisions of a single offer. Quarantined
+   rows are held for review, not silently collapsed and not silently dropped.
+4. **If genuine re-offer cycles are later introduced** — a candidate accepts, the offer is
+   lost to a rescind or a renege, and the same candidate accepts again for the same
+   requisition — build a separate offer-event fact with one row per offer event and an
+   offer sequence number. Do not extend `fct_application` with a second set of offer
+   columns.
+
+**dbt approach:** deduplicate with `qualify row_number() over (partition by application_id
+order by offer_accepted_date, offer_version)` after the revision-collapsing logic, not
+instead of it. Two tests are needed, not one:
+
+- a `unique` test on `application_id` in the resolved output, which proves the grain holds;
+- an **audit test on the source** counting applications with more than one distinct
+  accepted offer version, materialised with `store_failures: true`.
+
+The second test is the one that matters. A unique test on the output only proves the
+deduplication ran — it cannot tell you whether it discarded a real second acceptance.
 
 ---
 
@@ -167,8 +194,10 @@ business plans headcount on a number that overstates reality.
 the next stage from `dim_recruiting_stage`, a look-ahead to the following stage-event row,
 and a special rule for the Offer stage where the successful exit is the acceptance event —
 which stays a success even after a rescind or a renege. That is a window function plus two
-joins. Power BI cannot do it correctly at all, and doing it in Python means re-implementing
-window logic that SQL already has.
+joins. Complex DAX could reproduce it, but it would be fragile, expensive to evaluate at
+every visual, and wrong for this model — the contracts deliberately give Power BI no
+relationship between the stage-event fact and the application fact. Doing it in Python
+means re-implementing window logic that SQL already has.
 
 **Risk otherwise:** the wireframe already shows the trap. Interview conversion is 43%, and
 the wireframe notes it is "deliberately not calculated as 41 active offers ÷ 95 active
@@ -231,9 +260,24 @@ join** to that seed, not by a `CASE WHEN days_to_toad < 0 ...` written in SQL, P
 DAX. Then changing "High Risk" from 0–7 to 0–10 days is a one-line seed edit that every
 downstream model and every visual picks up on the next run.
 
-**Business value:** a TA leader who wants to tighten the escalation threshold gets the
-change in one place, and the band label, the bar chart, the At-Risk KPI and the
-`at_risk_max_days_to_toad` config all stay consistent.
+**The seed must be the only authority.** An earlier draft of this document claimed that a
+seed edit keeps everything synchronised. It does not, because the project had a second
+definition of the same rule: `at_risk_max_days_to_toad` in `ref_reporting_config`, with
+`ref_risk_band` carrying the band boundaries and `is_at_risk` per band. Two definitions of
+one threshold can only ever be *validated* against each other — a test detects the
+disagreement after it happens, it does not prevent it.
+
+The fix is to derive `is_at_risk` entirely from `ref_risk_band.is_at_risk` by joining
+`days_to_toad` to the band ranges, and to remove the duplicate threshold from the reporting
+configuration. **This change has been applied to the contracts**: the column and its seed
+value are gone from `ref_reporting_config.yaml` (now v1.1), the `fct_requisition` test now
+derives `is_at_risk` from the seed by range join, and the cross-check in `ref_risk_band.yaml`
+that compared the two copies has been replaced by a shape test on the bands themselves.
+
+**Business value:** a TA leader who wants to tighten the escalation threshold from 14 to 10
+days edits one seed row. The band label, the bar chart, the At-Risk KPI and every
+downstream model change together, because there is only one place that says what "at risk"
+means.
 
 **Risk otherwise:** the boundaries drift. The bar chart says "High Risk 0–7" while the KPI
 counts 0–10, and nobody notices for a quarter.
@@ -268,10 +312,10 @@ candidates. Without the cap, the forecast says 7 seats will be filled on a requi
 that only has 3. Forecast Fill Rate exceeds 100% for that job family and the executive
 loses trust in the whole chart.
 
-**Naming note:** the wireframe footnote still says "stage-to-acceptance yield". Contract
-v1.1 renamed it to **stage-to-active-fill yield** because the training label is
-`is_active_fill`, not the raw acceptance event. Worth correcting in `wireframe.html` when
-the dbt models are built, so the page and the contract use the same word.
+**Naming note (fixed):** the wireframe footnote said "stage-to-acceptance yield", the
+pre-v1.1 name. Contract v1.1 renamed it to **stage-to-active-fill yield** because the
+training label is `is_active_fill`, not the raw acceptance event. `wireframe.html` now uses
+the contract's word.
 
 ---
 
@@ -312,7 +356,11 @@ straightforward dbt aggregations of the facts. Three rules to keep:
 
 **What:** `as_of_date`, `history_start_date`, `future_thd_end_date`, `fill_rate_target`,
 `early_attrition_60d_target`, `attrition_window_days`, `quality_rolling_cohort_count`,
-`min_cohort_size`, `at_risk_max_days_to_toad`, `forecast_min_segment_observations`.
+`min_cohort_size`, `forecast_min_segment_observations`.
+
+Note what is **not** in this list: the At-Risk threshold. Risk classification is governed
+entirely by the `ref_risk_band` seed (see 4.7). Configuration holds values that have no
+other home; it does not hold a second copy of a rule a seed already defines.
 
 **Recommended pattern:** put these in `dbt_project.yml` under `vars`, so macros and models
 can read them at parse time, and build `ref_reporting_config` as a **one-row model** that
@@ -344,8 +392,8 @@ is that configuration, and it is the version that actually runs.
 ### 4.13 Validation rules as dbt tests
 
 This is the recommendation with the best effort-to-value ratio. `spec.md` section 12 lists
-roughly sixty business rules, and the schema contracts add more. Nearly all map directly
-onto dbt tests:
+roughly sixty business rules, and the schema contracts add more. Every one of them can be
+made executable, though not all through generic tests:
 
 | Rule type in the contracts | dbt test |
 |---|---|
@@ -354,6 +402,15 @@ onto dbt tests:
 | Reconciliation between two models | Singular tests in `tests/`, or `dbt_utils.equality` |
 | Referential integrity | `relationships` |
 | `severity: error` / `severity: warn` | dbt's own `severity` config |
+
+Expect the mapping to be partial. Generic tests cover the column-level rules well, but a
+large share of section 12 will need **custom singular tests** written as SQL in `tests/`.
+The reconciliation rules (`filled_positions` equals the count of active-fill applications
+per requisition, in total and per segment), the temporal rules (no actual event after the
+as-of date, across five different date columns on four models), and the historical-immutability
+rules (offer-stage conversion must be unchanged for a prior period after a post-acceptance
+loss) all compare across models or across time. None of them is expressible as a generic
+test. Budget for that work rather than assuming `dbt_utils` covers section 12.
 
 Two suggestions on top:
 
@@ -392,10 +449,12 @@ The dividing line: **Python may invent a record; it may not decide what a record
 Python creates an offer acceptance date. dbt decides whether that acceptance is still an
 active fill.
 
-One consequence for `spec.md`: section 13 currently says "Python project managed with
-`uv`" and "modular transformations rather than one monolithic script" as the engineering
-requirement. That should be updated to describe the split — Python generates sources, dbt
-owns transformations and tests — otherwise the spec and the implementation disagree.
+One consequence for `spec.md`: section 13 said "Python project managed with `uv`" and
+"modular transformations rather than one monolithic script" as the engineering requirement,
+which would leave the spec and the implementation disagreeing. **This has been applied**:
+section 13 now opens with a layer-ownership table stating Python as source generation, dbt
+as transformation and testing, and Power BI as semantic aggregation and presentation, with
+the decisive test for placing a calculation.
 
 ---
 
@@ -509,18 +568,26 @@ derives it from `ref()` and keeps it correct as the project grows.
 
 ## 9. Suggested sequence
 
-You do not need to build all of this at once. This order gets governance value early.
+You do not need to build all of this at once. This order gets governance value early, and
+it follows the dependency graph in section 8 rather than cutting across it.
 
-| Phase | Build | Why first |
+The sequence must respect one constraint: **the final `fct_application` and
+`fct_requisition` models cannot be built before `mart_stage_yield`**, because
+`fct_application.stage_to_active_fill_yield` comes from the yield mart and
+`fct_requisition.expected_pipeline_fills` comes from the application fact. The intermediate
+models come early; the two final facts close after the yield.
+
+| Phase | Build | Why here |
 |---|---|---|
 | 1 | Seeds, `ref_reporting_config`, `dim_date`, `dim_start_cohort`, the `as_of_date` macro | Reproducibility and cohort maturity are the foundation everything else assumes |
-| 2 | Staging and intermediate models, including offer-version resolution | Fixes the grain before anything counts it |
-| 3 | `fct_application`, `fct_application_stage_event`, `fct_requisition` with all identity tests | The vocabulary guarantees become executable |
-| 4 | `fct_hire_outcome`, `mart_exec_quality` | The quality KPI is the metric most exposed to a maturity mistake |
-| 5 | `mart_stage_yield`, forecast columns, `mart_exec_demand` | The forecast is safe only once the active-fill definition is tested |
-| 6 | `mart_exec_risk`, `mart_exec_pipeline`, reconciliation tests, model contracts, exposures | Closes the loop between the marts and the page |
+| 2 | Staging models, `int_requisition__resolved_snapshot`, `int_offer__resolved_acceptance` with its source audit test | Fixes the grain before anything counts it |
+| 3 | `int_application__events`, `int_stage_event__sequenced`, `fct_application_stage_event`, with the event/state and conversion tests | The vocabulary guarantees and stage conversion become executable. These are the **intermediate** application and requisition models — the final facts are not built yet |
+| 4 | `mart_stage_yield` | Training needs a tested `is_active_fill` flag and sequenced stage events, and nothing else |
+| 5 | `fct_application` with the applied yield, `int_requisition__pipeline_rollup`, then `fct_requisition` with the roll-ups, risk band and capped forecast | The point where the two final facts can close, because the yield now exists |
+| 6 | `fct_hire_outcome`, `mart_exec_quality` | The quality KPI is the metric most exposed to a maturity mistake |
+| 7 | `mart_exec_demand`, `mart_exec_risk`, `mart_exec_pipeline`, reconciliation tests, model contracts, exposures | Closes the loop between the marts and the page |
 
-Adding a dbt **exposure** for the Executive Summary page in phase 6 is a small step with
+Adding a dbt **exposure** for the Executive Summary page in phase 7 is a small step with
 good returns: lineage then shows which models feed which visual, and the wireframe coverage
 table in `schemas/README.md` gains a machine-readable counterpart.
 

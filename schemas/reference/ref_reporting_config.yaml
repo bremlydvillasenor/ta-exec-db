@@ -1,6 +1,6 @@
 dataset: ref_reporting_config
 layer: reference
-version: 1.0
+version: 1.1
 purpose: >
   Single-row project configuration. It holds the fixed reporting as-of date,
   the data coverage window, executive targets and the thresholds that govern
@@ -59,10 +59,6 @@ columns:
     type: integer
     nullable: false
     description: Minimum matured hires for a monthly attrition point to be shown without a low-volume flag.
-  - name: at_risk_max_days_to_toad
-    type: integer
-    nullable: false
-    description: Upper bound of days_to_toad for the At-Risk definition (14). Must match ref_risk_band.
   - name: forecast_min_segment_observations
     type: integer
     nullable: false
@@ -80,7 +76,6 @@ seed_rows:
     attrition_window_days: 60
     quality_rolling_cohort_count: 12
     min_cohort_size: 30
-    at_risk_max_days_to_toad: 14
     forecast_min_segment_observations: 30
 
 relationships: []
@@ -89,6 +84,12 @@ business_rules:
   - Changing as_of_date and re-running the pipeline is the only supported way to move the reporting date.
   - history_end_date must equal as_of_date; actual events after it are a hard failure.
   - Targets are reference values for comparison only; they are never stored inside marts.
+  - The At-Risk definition is NOT configured here. Risk band boundaries and which bands
+    count as at risk are governed solely by the ref_risk_band seed, and is_at_risk is
+    derived from ref_risk_band.is_at_risk by joining days_to_toad to the band ranges.
+    at_risk_max_days_to_toad was removed in v1.1 because a second copy of the threshold
+    can only ever be validated, never kept in step, with the seed that actually defines
+    the bands.
 
 data_quality_tests:
   - {test: row_count_equals, value: 1}

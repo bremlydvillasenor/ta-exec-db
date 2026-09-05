@@ -1125,12 +1125,33 @@ The completed analytics project should provide:
 
 ### Engineering requirements
 
-- Python project managed with `uv`
-- deterministic configuration for the as-of date
-- modular transformations rather than one monolithic script
-- clear source / intermediate / fact / mart separation
+#### Layer ownership
+
+Each layer owns one kind of work, and no calculation may be implemented in more than one
+of them.
+
+| Layer | Owns | Must not do |
+|---|---|---|
+| **Python** | Source generation: creating the synthetic ATS and HR records that simulate the source systems | Decide what a record means. Python may invent an offer acceptance date; it may not decide whether that acceptance is still an active fill |
+| **dbt** | Every transformation between source and mart: grain resolution, row-level derivations, classifications, roll-ups, the forecast, and all validation tests | Store final rates or medians as the values the report presents |
+| **Power BI** | Semantic aggregation under the user's filter context, and presentation | Re-implement any business rule, or recreate a count that requires a fact-to-fact relationship |
+
+The decisive test for a calculation: if it needs the configured as-of date, a grain the
+report model cannot reach, or a rule that must be identical in every visual, it belongs in
+dbt. If it is dividing two additive columns or taking a median over a governed row-level
+column in the current filter context, it belongs in Power BI.
+
+`dbt-ownership.md` holds the full review and the model-by-model recommendation.
+
+#### Requirements
+
+- Python project managed with `uv` for source generation
+- dbt project for all transformations, contracts and tests
+- deterministic configuration for the as-of date, read from `ref_reporting_config`; no layer reads the system clock
+- governed vocabulary held as seeds (recruiting stages, risk bands, hiring constraints) and referenced by models, never hard-coded in transformation code
+- clear source / staging / intermediate / fact / mart separation, with the dependency order derived from the model graph rather than maintained by hand
+- the business rules in section 12 implemented as executable tests, including custom tests for the reconciliation and temporal rules that generic tests cannot express
 - logging
-- validation tests
 - repeatable execution
 
 The implementation should favor simplicity and readability over unnecessary framework complexity.

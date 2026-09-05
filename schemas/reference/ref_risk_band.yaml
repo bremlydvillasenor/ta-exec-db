@@ -63,7 +63,7 @@ data_quality_tests:
   - {test: unique, columns: [risk_band_key]}
   - {test: unique, columns: [risk_band_code]}
   - {test: expression, expression: "bands cover every integer exactly once (no gap, no overlap)"}
-  - {test: expression, expression: "max(max_days_to_toad where is_at_risk) = ref_reporting_config.at_risk_max_days_to_toad"}
+  - {test: expression, expression: "the is_at_risk bands are contiguous and start at the most urgent band, so a single upper bound on days_to_toad describes them"}
 
 power_bi:
   hide_columns: [risk_band_key, min_days_to_toad, max_days_to_toad]
