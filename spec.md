@@ -237,11 +237,13 @@ resolution rule is:
    resolved — `administrative_revision` or `quarantined` — and why. A uniqueness test on the
    resolved output only proves that the resolution ran; the audit model is what shows
    whether a real second acceptance was discarded.
-5. **Fail hard only on the two cases that mean something is wrong.** The build must fail
-   when a multi-version application is neither resolved as administrative revisions nor
-   quarantined — nobody can then say what happened to it — and when an application marked
-   quarantined reaches the final application fact. Quarantined applications are reviewed by
-   a person before anything counts them.
+5. **Fail hard on the three cases that mean something is wrong.** The build must fail when
+   a multi-version application is **missing from the audit model** — it was never classified
+   at all, and no test that reads the model's rows can see it; when a recorded application
+   is resolved as neither administrative revisions nor quarantined, so nobody can say what
+   happened to it; and when an application marked quarantined reaches the final application
+   fact. Quarantined applications are reviewed by a person before anything counts them. The
+   *number* of multi-version applications is reported for visibility and never gated on.
 6. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
 
 The resolution rule must be documented where it is applied.
@@ -870,8 +872,9 @@ one distinct acceptance cycle that cannot be resolved this way must be quarantin
 review, never loaded as-is and never silently collapsed. Multiple accepted offer versions in
 the source are expected and must not fail the build by themselves; instead, an audit model
 must record every application that arrived with more than one accepted version and how it
-was resolved. The hard failures are narrower: a multi-version application left neither
-resolved nor quarantined, or a quarantined application reaching the application fact. The
+was resolved. The hard failures are narrower: a multi-version application missing from that
+audit model, one recorded but left neither resolved nor quarantined, or a quarantined
+application reaching the application fact. The
 resolution rule must be documented where it is applied.
 
 If future requirements need multiple acceptance or re-offer cycles for a single application,
@@ -1093,8 +1096,8 @@ requested_positions = filled_positions + openings_position
 8. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
 9. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
 10. One application must carry at most one governed accepted-offer event. Administrative revisions of the accepted offer are collapsed and the earliest valid acceptance event of that cycle is preserved. An application with more than one distinct acceptance cycle is quarantined for review, not loaded as-is and not silently collapsed.
-11. An audit model must record every source application arriving with more than one accepted offer version, with its resolution (`administrative_revision` or `quarantined`). Multiple accepted versions are expected and are not a failure. The uniqueness test on the resolved output proves only that the resolution ran, not that it was correct.
-12. Two hard tests must fail the build: any multi-version application whose resolution is neither `administrative_revision` nor `quarantined`, and any quarantined application appearing in the application fact.
+11. An audit model must record every source application arriving with more than one accepted offer version, with its resolution (`administrative_revision` or `quarantined`). Multiple accepted versions are valid, and their count alone is never a failure; it is reported for visibility. The uniqueness test on the resolved output proves only that the resolution ran, not that it was correct.
+12. Three hard tests must fail the build: any multi-version application absent from the audit model, any audit row whose resolution is neither `administrative_revision` nor `quarantined`, and any quarantined application appearing in the application fact. The first is required because a missing application is invisible to the other two.
 
 ### Pipeline rules
 
@@ -1246,7 +1249,7 @@ The Executive Summary data project is complete when all of the following are tru
 5. Fill Rate reconciles from requested, filled, and open position quantities, where filled means active fills.
 6. Offer acceptance, active fill, and hire are modelled as three separate concepts; no metric is defined from an application status value.
 7. `offer_accepted_date` is preserved after an employer rescind or a candidate renege, and a seat lost after acceptance is restated as open.
-8. One application contributes at most one governed accepted-offer event: administrative revisions are collapsed, the earliest valid acceptance of the accepted cycle is preserved, ambiguous multiple-acceptance cases are quarantined for review, an audit model records every source application with multiple accepted versions and how it was resolved, the build fails only on an unclassified multi-version application or a quarantined application reaching the fact, and the limitation plus its remedy (a separate offer-event fact) are documented.
+8. One application contributes at most one governed accepted-offer event: administrative revisions are collapsed, the earliest valid acceptance of the accepted cycle is preserved, ambiguous multiple-acceptance cases are quarantined for review, an audit model records every source application with multiple accepted versions and how it was resolved, the build fails on an unrecorded multi-version application, an unclassified one, or a quarantined application reaching the fact, and the limitation plus its remedy (a separate offer-event fact) are documented.
 9. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
 10. Open-position risk is based on source TOAD and the configured as-of date.
 11. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.

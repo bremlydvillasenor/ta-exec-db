@@ -184,20 +184,27 @@ one row per source application that arrived with more than one accepted version:
 | `resolution_notes` | why, for quarantined rows |
 
 This model is expected to hold rows in normal operation. Collapsing administrative revisions
-is the *designed* behaviour, so a count of multi-version applications must never fail a build
-on its own — a test with `severity: error` on that count would break every run in which a
-recruiter corrected a salary. Materialise it as a table and let people read it.
+is the *designed* behaviour, so the **count** of multi-version applications must never fail a
+build — gating on it would break every run in which a recruiter corrected a salary. Report
+that count and trend it; a rise means more offer revisions, which is a recruiting-process
+observation, not a data defect.
 
-Three tests then sit on top of it, and only two of them are hard:
+Everything else here is a hard gate, and the ordering matters:
 
 | Test | Severity | What it catches |
 |---|---|---|
 | `unique` on `application_id` in the resolved output | error | the resolution ran and the grain holds |
+| every source application with >1 accepted version has a row in `audit_offer__multi_accepted_version` | error | a multi-version application that was **never recorded** — so it was never classified either way |
 | `resolution IN ('administrative_revision','quarantined')` on every audit row | error | an **unclassified** multi-version application — the logic did not cover the case, so nobody can say whether a real second acceptance was discarded |
 | no `quarantined` `application_id` appears in `fct_application` | error | an unresolved acceptance being counted as a seat |
+| `COUNT` of multi-version applications | *not a test* | reported for visibility only |
 
-Add a `store_failures: true` audit count as a `warn` for visibility if you like, but the
-gate is the pair above. A unique test on the output alone only proves the deduplication ran.
+The coverage test is the one people leave out, and it is the one that matters most. The last
+two tests read rows that exist in the audit model, so neither can detect an application that
+never reached it — a deduplication step that silently dropped a second acceptance before the
+audit logic ran would pass both. Coverage is what closes that hole. Run it as a singular test
+comparing distinct multi-version `application_id`s in the source against the audit model,
+with `store_failures: true` so the offenders are inspectable.
 
 ---
 

@@ -95,9 +95,11 @@ resolution rule is:
    version, with its resolution — `administrative_revision` or `quarantined` — and why. A
    uniqueness test on the resolved output only proves that the resolution ran; the audit
    model is what shows whether a real second acceptance was discarded.
-5. **Fail hard only on the two cases that mean something is wrong.** A multi-version
-   application left neither resolved nor quarantined, and a quarantined application reaching
-   `fct_application`. Everything else the audit model simply records.
+5. **Fail hard on the three cases that mean something is wrong.** A multi-version
+   application **missing from the audit model** — it was never classified, and no test that
+   reads the model can see it; one recorded but left neither resolved nor quarantined; and a
+   quarantined application reaching `fct_application`. The count of multi-version
+   applications is reported, never gated on.
 6. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
 
 Resolution happens **upstream**, at the resolved-sources stage of the dependency flow,
