@@ -76,10 +76,26 @@ keeps `accepted_offer_events`, `filled_positions` and `started_positions` reconc
 requisition grain.
 
 Multiple offer versions before final acceptance — a revised salary, a moved start date, a
-re-issued offer letter — are offer *versions*, not separate acceptance events. They must be
-resolved **upstream** to the single governed acceptance (normally the earliest acceptance
-date of the offer the candidate actually accepted), and the resolution rule must be
-documented where it is applied.
+re-issued offer letter — are offer *versions*, not separate acceptance events. The
+resolution rule is:
+
+1. **Collapse administrative revisions of the same accepted offer.** A corrected salary, a
+   moved start date or a re-issued letter for the offer the candidate accepted are versions
+   of one event and must not produce a second acceptance.
+2. **Preserve the earliest valid acceptance event for the accepted offer cycle.** The
+   governed acceptance date is the moment the candidate committed, not the date of the last
+   piece of paperwork.
+3. **Quarantine ambiguous multiple-acceptance cases for review.** An application carrying
+   more than one distinct acceptance cycle that cannot be resolved as revisions of a single
+   offer is held for review — never silently collapsed, and never silently dropped.
+4. **Audit the source, not only the output.** A source-level test must count applications
+   arriving with more than one accepted offer version. A uniqueness test on the resolved
+   output only proves that the resolution ran; it cannot show whether a real second
+   acceptance was discarded.
+5. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
+
+Resolution happens **upstream**, at the resolved-sources stage of the dependency flow,
+before anything counts an acceptance. The rule must be documented where it is applied.
 
 Not covered today: a genuine re-offer cycle, where a candidate accepts, the offer is lost to
 a rescind or renege, and the same candidate is later re-offered and accepts again for the
@@ -200,17 +216,70 @@ before the as-of date. For 2026-05-31 the latest fully matured cohort is **March
 `dim_start_cohort.kpi_cohort_window` marks the latest 12 matured months (`latest_12`) and the
 12 before them (`prior_12`).
 
-## Build / dependency order
+## Dependency flow
 
-1. `ref_reporting_config`, `ref_risk_band` (seed values from YAML)
-2. `dim_date`, `dim_start_cohort` (generated from config), `dim_recruiting_stage`, `dim_hiring_constraint` (seed rows), `dim_business_unit`, `dim_job_family`, `dim_job_level` (from source)
-3. `fct_requisition` (base columns: status, dates, quantities, constraint, risk band) — pipeline/forecast columns are filled in step 6
-4. `fct_application` (base columns, the offer-acceptance event, post-acceptance events and `employee_start_date`) and `fct_application_stage_event`. Resolve multiple source offer versions to the single governed acceptance **before** this step. Derive `is_active_fill` and `post_acceptance_outcome` here; never overwrite `offer_accepted_date` when a rescind or renege is loaded.
-5. `mart_stage_yield` (from stage events + application outcomes with a final outcome; training label is `is_active_fill`)
-6. Apply yield (stage-to-active-fill): `fct_application.stage_to_active_fill_yield`; then `fct_requisition.active_pipeline_applications`, `expected_pipeline_fills_uncapped`, `expected_pipeline_fills` (capped at `openings_position`)
-7. `fct_hire_outcome` (from applications with `is_started` = true + HR start/termination events, flags from `dim_start_cohort`). Accepted offers with no start - pending, rescinded or reneged - are correctly excluded here.
-8. `mart_exec_demand`, `mart_exec_risk`, `mart_exec_pipeline`, `mart_exec_quality`
-9. Reconciliation tests: marts vs facts (see each mart's `data_quality_tests`)
+These contracts define **what** each dataset must contain and which rules it must satisfy.
+The transformations themselves are built in a separate implementation repository as a dbt
+project, which derives its own build order from `ref()` dependencies. The flow below is the
+conceptual dependency order those models must satisfy — a requirement on the downstream
+implementation, not a runbook for anyone to maintain by hand.
+
+```text
+resolved sources
+  -> application events
+  -> sequenced stage events
+  -> stage yield
+  -> final application fact
+  -> requisition pipeline roll-up
+  -> final requisition fact
+  -> executive marts
+```
+
+Stage by stage:
+
+0. **Configuration and governed seeds** — `ref_reporting_config` and `ref_risk_band`, plus
+   the `dim_recruiting_stage` and `dim_hiring_constraint` seed rows. Then `dim_date` and
+   `dim_start_cohort` generated from the configuration, and `dim_business_unit`,
+   `dim_job_family`, `dim_job_level` from source.
+1. **Resolved sources** — one row per requisition (the latest source snapshot on or before
+   the as-of date) and one governed accepted-offer event per application. Offer-version
+   resolution belongs here, before anything counts an acceptance.
+2. **Application events** — the intermediate application model:
+   `is_offer_accepted_event`, `is_active_fill`, `is_started`, `post_acceptance_outcome`,
+   `time_to_fill_days`, `is_active_pipeline`, `has_final_outcome`. Derived from dated
+   events, never from a status value; `offer_accepted_date` is never overwritten when a
+   rescind or renege is loaded. No yield is applied yet.
+3. **Sequenced stage events** — `fct_application_stage_event`: stage sequence, completion,
+   `days_in_stage`, and `advanced_to_next_stage`, where the offer stage converts on the
+   acceptance event rather than on current fill state.
+4. **Stage yield** — `mart_stage_yield`, trained only on applications with a final outcome
+   on or before the as-of date, label `is_active_fill`, with the documented segment
+   fallback.
+5. **Final application fact** — `fct_application`: the application events plus
+   `stage_to_active_fill_yield` and `yield_segment_level` applied per active candidate.
+6. **Requisition pipeline roll-up** — application counts returned to requisition grain
+   (`filled_positions`, `accepted_offer_events`, `lost_after_acceptance_positions`,
+   `started_positions`, `active_pipeline_applications`) plus
+   `expected_pipeline_fills_uncapped`.
+7. **Final requisition fact** — `fct_requisition`: those roll-ups, `days_to_toad` and
+   `risk_band_code` resolved against the `ref_risk_band` seed, and `expected_pipeline_fills`
+   capped at `openings_position`.
+8. **`fct_hire_outcome`** — from applications with `is_started` = true plus HR start and
+   termination events, with cohort flags from `dim_start_cohort`. Accepted offers with no
+   start — pending, rescinded or reneged — are correctly excluded here.
+9. **Executive marts** — `mart_exec_demand`, `mart_exec_risk`, `mart_exec_pipeline`,
+   `mart_exec_quality`, followed by the reconciliation tests listed in each mart's
+   `data_quality_tests`.
+
+**Why the intermediate stages are required.** An earlier version of this section built
+`fct_requisition` with "base columns" and filled its pipeline and forecast columns in a
+later step. That is a circular dependency: `fct_requisition` needs `fct_application`, which
+needs `mart_stage_yield`, which needs `fct_application`, which needs `fct_requisition`. It
+resolves only where a script can add columns to a table it has already written, which a dbt
+model cannot do. Splitting both facts into an intermediate stage (resolved sources,
+application events, pipeline roll-up) and a final stage removes the cycle — and is what lets
+the implementation repository derive this order automatically instead of a maintainer
+keeping a numbered list correct by hand.
 
 ## Major modelling decisions
 

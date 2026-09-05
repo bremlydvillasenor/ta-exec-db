@@ -6,6 +6,22 @@ and which should stay in Python.
 
 Fixed reporting as-of date: **2026-05-31**. Nothing in any layer reads the system clock.
 
+## Repository boundary
+
+This document is a **contract for a downstream implementation**, not a description of code
+in this repository. `ta-exec-db` holds the specification, the wireframe, the metric
+definitions and the dataset contracts; no Python or dbt project files belong here.
+
+| Repository | Owns |
+|---|---|
+| **This repository (`ta-exec-db`)** | Required grains, columns, metrics, business rules, validation tests, and the dbt architecture the implementation must follow |
+| **Separate implementation repository** | Python synthetic-source generation, the dbt models, the executable tests, orchestration, and production of the CSV / Parquet outputs |
+| **Power BI** | Consuming the validated outputs, and owning filter-responsive ratios, medians and presentation |
+
+Every model name, project layout and test in this document describes what the
+implementation repository must build. Read them as requirements, not as an inventory of
+files.
+
 ---
 
 ## 1. Short answer
@@ -45,6 +61,13 @@ Use this decision test on any calculation before deciding where it lives.
 | Is it a median over a governed row-level column? | **Power BI** |
 | Is it formatting, sorting, conditional highlighting, or a target comparison label? | **Power BI** |
 | Is it creating the raw source records? | **Python** |
+
+**One definition, not one location.** Governed business logic must not be independently
+reimplemented across layers — one definition, in one place, that the others consume.
+Reference calculations may legitimately appear in more than one place: the marts store
+row-grain rates and medians precisely so a build can prove the mart and the fact agree.
+Those are validation values, hidden from the report. The figure the executive actually
+reads is still calculated once, by the layer that owns it.
 
 The three-layer split:
 
@@ -257,8 +280,11 @@ snapshot_date desc)` filtered to `snapshot_date <= as_of_date`, with a `unique` 
 **Why dbt:** `ref_risk_band` already defines the bands as data — `min_days_to_toad` and
 `max_days_to_toad` per band. Load it as a dbt **seed** and assign the band by a **range
 join** to that seed, not by a `CASE WHEN days_to_toad < 0 ...` written in SQL, Python and
-DAX. Then changing "High Risk" from 0–7 to 0–10 days is a one-line seed edit that every
-downstream model and every visual picks up on the next run.
+DAX. Changing the bands then means editing the seed, and only the seed. Moving the at-risk
+boundary from 14 to 10 days touches two band rows — `medium_risk` gains a new upper bound
+and `on_track` a new lower bound — because the bands must stay contiguous. That is still one
+governed file, reviewed as one change, and every downstream model and every visual picks it
+up on the next run.
 
 **The seed must be the only authority.** An earlier draft of this document claimed that a
 seed edit keeps everything synchronised. It does not, because the project had a second
@@ -275,9 +301,11 @@ derives `is_at_risk` from the seed by range join, and the cross-check in `ref_ri
 that compared the two copies has been replaced by a shape test on the bands themselves.
 
 **Business value:** a TA leader who wants to tighten the escalation threshold from 14 to 10
-days edits one seed row. The band label, the bar chart, the At-Risk KPI and every
-downstream model change together, because there is only one place that says what "at risk"
-means.
+days gets a change confined to `ref_risk_band`. It may span more than one row there, since
+adjusting a boundary means adjusting the band on each side of it, but it is one governed
+seed file and one review. The band label, the bar chart, the At-Risk KPI and every
+downstream model then move together, because there is only one place that says what "at
+risk" means.
 
 **Risk otherwise:** the boundaries drift. The bar chart says "High Risk 0–7" while the KPI
 counts 0–10, and nobody notices for a quarter.
@@ -442,8 +470,9 @@ pre-computed as final values.
 ## 6. What should stay in Python
 
 Generating the synthetic source data. That is simulating an ATS and an HR system, not
-transforming it. Keep it as the current `uv`-managed project, and have it write raw source
-files (CSV or Parquet) that dbt reads as sources.
+transforming it. It belongs in the implementation repository as a `uv`-managed project that
+writes raw source files (CSV or Parquet) for dbt to read as sources — not in this
+repository, which holds no generation code.
 
 The dividing line: **Python may invent a record; it may not decide what a record means.**
 Python creates an offer acceptance date. dbt decides whether that acceptance is still an
@@ -452,13 +481,17 @@ active fill.
 One consequence for `spec.md`: section 13 said "Python project managed with `uv`" and
 "modular transformations rather than one monolithic script" as the engineering requirement,
 which would leave the spec and the implementation disagreeing. **This has been applied**:
-section 13 now opens with a layer-ownership table stating Python as source generation, dbt
-as transformation and testing, and Power BI as semantic aggregation and presentation, with
-the decisive test for placing a calculation.
+section 13 now opens with a repository-boundary table and a layer-ownership table, stating
+Python as synthetic-source generation, dbt as transformation and testing, and Power BI as
+semantic aggregation and presentation — and marking the whole engineering section as
+requirements on the separate implementation repository.
 
 ---
 
-## 7. Proposed dbt project shape
+## 7. Required dbt project shape
+
+This is the structure the **implementation repository** must build. None of these files
+belongs in `ta-exec-db`.
 
 ```
 dbt_project.yml            # vars: as_of_date, targets, thresholds
@@ -512,9 +545,10 @@ tests/
   assert_forecast_not_greater_than_demand.sql
 ```
 
-Each `schemas/*.yaml` file becomes the matching dbt `_models.yml` entry: same columns, same
-descriptions, same tests, plus `contract: {enforced: true}`. The YAML contracts stop being
-documentation about the pipeline and become part of it.
+Each `schemas/*.yaml` file in this repository becomes the matching dbt `_models.yml` entry
+over there: same columns, same descriptions, same tests, plus `contract: {enforced: true}`.
+That is the mechanism by which these contracts stop being documentation about a pipeline
+and start governing one — the contract is authored here and enforced at build time there.
 
 **Warehouse suggestion:** dbt-duckdb fits this project well. It runs locally with no
 infrastructure, reads the Python-generated CSV or Parquet sources directly, and can
@@ -523,22 +557,23 @@ section 13 asks for.
 
 ---
 
-## 8. One finding from the review: the build order has a circular dependency
+## 8. Resolved finding: the build order was circular
 
-`schemas/README.md` describes the build order like this:
+`schemas/README.md` used to describe the build order as a numbered list, in which:
 
-- Step 3 — build `fct_requisition` "base columns", noting that "pipeline/forecast columns
-  are filled in step 6"
-- Step 6 — apply the yield to `fct_application`, then compute
+- Step 3 built `fct_requisition` "base columns", noting that "pipeline/forecast columns are
+  filled in step 6"
+- Step 6 applied the yield to `fct_application`, then computed
   `fct_requisition.active_pipeline_applications` and `expected_pipeline_fills`
 
 That works in Python, where a script can add columns to a DataFrame later. It does **not**
 work in dbt, where a model is one immutable `SELECT`. As written, `fct_requisition`
-depends on `fct_application`, which depends on `mart_stage_yield`, which depends on
-`fct_application`, which depends on `fct_requisition`.
+depended on `fct_application`, which depended on `mart_stage_yield`, which depended on
+`fct_application`, which depended on `fct_requisition`.
 
-The fix is to split the two facts into an intermediate stage and a final stage, which
-gives a clean acyclic graph:
+**This has been fixed.** `schemas/README.md` now carries a conceptual *dependency flow*
+instead of a numbered build order, splitting the two facts into an intermediate stage and a
+final stage to give a clean acyclic graph:
 
 ```
 int_requisition__resolved_snapshot     (source columns, status, quantities, TOAD)
@@ -561,8 +596,9 @@ fct_hire_outcome  ->  the four mart_exec_* models
 ```
 
 This is worth doing regardless of dbt, but dbt makes it unavoidable — which is a benefit.
-It also means the hand-maintained build order in `schemas/README.md` can be deleted: dbt
-derives it from `ref()` and keeps it correct as the project grows.
+It is also why `schemas/README.md` now states the flow conceptually and leaves the ordering
+to the implementation: dbt derives the order from `ref()` dependencies and keeps it correct
+as the project grows, so no maintainer has to keep a numbered list accurate by hand.
 
 ---
 
@@ -581,7 +617,7 @@ models come early; the two final facts close after the yield.
 |---|---|---|
 | 1 | Seeds, `ref_reporting_config`, `dim_date`, `dim_start_cohort`, the `as_of_date` macro | Reproducibility and cohort maturity are the foundation everything else assumes |
 | 2 | Staging models, `int_requisition__resolved_snapshot`, `int_offer__resolved_acceptance` with its source audit test | Fixes the grain before anything counts it |
-| 3 | `int_application__events`, `int_stage_event__sequenced`, `fct_application_stage_event`, with the event/state and conversion tests | The vocabulary guarantees and stage conversion become executable. These are the **intermediate** application and requisition models — the final facts are not built yet |
+| 3 | `int_application__events`, `int_stage_event__sequenced`, `fct_application_stage_event`, with the event/state and conversion tests | The vocabulary guarantees and stage conversion become executable. This phase builds the **intermediate application model** and the stage-event fact; the requisition side is still only the resolved snapshot from phase 2, and neither final fact is built yet |
 | 4 | `mart_stage_yield` | Training needs a tested `is_active_fill` flag and sequenced stage events, and nothing else |
 | 5 | `fct_application` with the applied yield, `int_requisition__pipeline_rollup`, then `fct_requisition` with the roll-ups, risk band and capped forecast | The point where the two final facts can close, because the yield now exists |
 | 6 | `fct_hire_outcome`, `mart_exec_quality` | The quality KPI is the metric most exposed to a maturity mistake |
