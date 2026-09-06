@@ -1,5 +1,8 @@
 # TA Executive Dashboard — Project Specification
 
+Contract release: **1.2**. Source-of-truth precedence is defined in `README.md`.
+This spec is the highest-ranked project file; the wireframe is always last.
+
 ## 1. Project overview
 
 This project builds the analytics-ready data layer for a **Talent Acquisition Executive Summary** report in Power BI.
@@ -158,7 +161,8 @@ TOAD is the date used to classify open-position risk.
 
 ### 5.4 Offer acceptance, filled position, and hire
 
-These are three different things and must not be defined from one another.
+These are three different concepts. Active fill is derived from acceptance and
+subsequent loss events; acceptance must never be inferred from current fill status.
 
 **Offer acceptance is an immutable historical event. Current fill status is a separate current-state concept.**
 
@@ -208,8 +212,9 @@ A candidate leaving with no offer on the table is `withdrawn`; one screened out 
 employer is `rejected`. Neither is an offer-loss term. `rescind` must never be used for a
 pre-acceptance withdrawal.
 
-No metric may be defined from an application status value. Statuses change; dated events do
-not. In particular, `is_offer_accepted` must not be derived from `application_status = hired`.
+Historical event metrics must use dated events, never current status text. Current
+active pipeline may use a validated as-of status. In particular, acceptance must not
+be derived from a status value such as `hired`.
 
 **Scope limit — one acceptance per application.** One application contributes at most one
 governed accepted-offer event. One accepted offer equals one seat, and every offer-based
@@ -251,6 +256,9 @@ The resolution rule must be documented where it is applied.
 A genuine re-offer cycle, where the same candidate accepts, is lost to a rescind or renege,
 and is later re-offered and accepts again for the same requisition, is out of scope for the
 current design; the source is expected to produce a new application for the second attempt.
+Candidate/requisition pairs may repeat across distinct application attempts;
+`application_id` is the unique attempt identifier. Prevent overlapping active fills
+for the same candidate and requisition.
 If multiple acceptance or re-offer cycles per application become a requirement, a separate
 offer-event fact must be introduced rather than adding further offer columns to the
 application fact.
@@ -281,6 +289,19 @@ SUM(openings_position)
 for qualifying open requisitions.
 
 `openings_position` is a requisition-level quantity. It must not be multiplied by the number of candidates or stage events joined to the requisition.
+
+### Reporting eligibility and historical attribution
+
+Derive `is_delivery_eligible = NOT is_cancelled` from the latest requisition snapshot
+on or before the as-of date. Carry it onto applications, stage events and hires.
+Demand, delivery, pipeline and offer-context metrics exclude ineligible rows; keep
+those rows and their events in facts for audit. Quality uses all actual started
+hires in its matured cohorts, regardless of subsequent requisition cancellation.
+
+THD and BU/Job Family/Job Level attribution use that resolved snapshot. A moved THD,
+changed segment or cancelled requisition can restate historical period totals.
+Acceptance event preservation does not promise frozen reporting totals. Immutable
+as-reported history is outside this fixed-as-of portfolio phase.
 
 ### 5.6 Hiring constraint
 
@@ -346,7 +367,7 @@ closed, and not a count of historical accepted offers.
 
 Fill Rate reports **current** state. If an accepted offer is later rescinded or reneged and
 the seat re-opens, Fill Rate falls. The historical accepted-offer count is reported
-separately and never falls, so the drop is explainable rather than mysterious. Show
+separately and is preserved for the same applications after a loss. Show
 post-acceptance losses alongside Fill Rate whenever it moves for this reason.
 
 ---
@@ -368,7 +389,8 @@ do not count here either — their seats are restated as open.
 Two supporting counts must be available alongside this metric:
 
 - **Accepted Offer Events** — every accepted offer on or before the as-of date, including
-  those later lost. Historical, never decreases.
+  those later lost. The event is preserved; totals can restate under changed THD,
+  segment assignment or requisition cancellation.
 - **Post-Acceptance Losses** — accepted offers lost to employer rescind or candidate renege,
   reported separately for the two causes.
 
@@ -549,8 +571,9 @@ reneged, or the person never started. Historical conversion describes what the r
 process achieved at that point in time; current fill status is a separate concept reported
 by EXEC-01.
 
-Offer-stage conversion will therefore normally sit above the current fill picture. The
-difference is exactly the post-acceptance losses, and it is reported, not hidden.
+Acceptance and active-fill COUNTS on the same applications differ by post-acceptance
+losses. Their rates have that relationship only with the same denominator; do not
+rank Offer conversion against demand-based Fill Rate.
 
 The exact stage mapping must be governed in configuration or YAML rather than embedded repeatedly in transformation code.
 
@@ -705,7 +728,26 @@ Forecast Fill Rate = Forecast Filled Positions / Demand
 
 The forecast should support grouping by THD month so Power BI can show actual Fill Rate and projected Fill Rate on the same executive trend.
 
-### 7.6 Leakage prevention
+### 7.6 Baseline interpretation and sparse data
+
+Display the forecast as **Projected eventual fill rate from current pipeline**.
+It estimates eventual attainment of THD-grouped demand, not fills by THD/TOAD.
+The baseline uses `is_yield_training_eligible = has_final_outcome`, with final
+meaning no longer in active recruiting as of the reporting date. Pending starts
+are eligible active fills but their later loss outcome is not fully observed.
+Thus the estimate reflects observed losses to date, not a guarantee of eventual
+retention of accepted offers. Existing pending fills are assumed to remain filled;
+future applicants are excluded. Document these limits; no complex correction is
+required for this phase.
+
+Fallback retains stage at each level: BU/JF/JL, JF/JL, JF, then global. Use the first
+level meeting the configured minimum count. Global may be used below the minimum
+with a low-support warning, but must have at least one observation. If an active
+candidate needs a stage with zero global observations, fail forecast validation
+rather than invent a probability. The per-requisition cap is a practical planning
+approximation, not an exact probability model.
+
+### 7.7 Leakage prevention
 
 Historical yield calculations must use only recruiting outcomes known on or before May 31, 2026.
 
@@ -744,7 +786,7 @@ The purpose of every visual should be to explain one of the executive questions 
 
 Required slicers / filters:
 
-- Target Hire Date range
+- Target Hire Date month range (whole months only, to align monthly marts and daily facts)
 - Business Unit
 - Job Family
 - Job Level, if retained in the wireframe
@@ -920,113 +962,21 @@ A hire should appear once at this grain. Multiple termination or worker-event so
 
 ## 10. Executive marts
 
-The exact physical mart design may be refined during implementation. The following outputs are recommended because they keep Power BI logic simple.
+The dataset YAML files define exact output columns. Use these agreed grains:
 
-### `mart_exec_demand`
+| Dataset | Grain | Main outputs |
+|---|---|---|
+| `mart_exec_demand` | THD month + BU + Job Family + Job Level | Requested, active filled, open, accepted events, losses, starts and capped forecast quantities |
+| `mart_exec_risk` | Open requisition | Source TOAD, days-to-TOAD, risk band, open seats and primary constraint |
+| `mart_exec_pipeline` | THD month + BU + Job Family + Job Level + stage | Active applications, completed/advanced stage counts and reference durations |
+| `mart_exec_quality` | Start month + BU + Job Family + Job Level | Matured hires, early exits, sample size and same-cohort reference Time to Fill |
+| `mart_stage_yield` | BU + Job Family + Job Level + stage | Observed/applied yield, supporting observation count and fallback level; dbt forecast lookup |
 
-Purpose: KPI and THD-based delivery analysis.
-
-Suggested grain:
-
-```text
-THD month + Business Unit + Job Family + Job Level
-```
-
-Suggested measures:
-
-- requested_positions
-- filled_positions (active fills)
-- accepted_offer_events
-- lost_after_acceptance_positions
-- started_positions
-- open_positions
-- fill_rate
-- median_time_to_fill
-
-### `mart_exec_risk`
-
-Purpose: open-position risk and hiring-constraint visuals.
-
-Suggested grain:
-
-```text
-requisition
-```
-
-Suggested fields:
-
-- target_hire_date
-- target_offer_acceptance_date
-- days_to_toad
-- risk_band
-- openings_position
-- primary_hiring_constraint
-- Business Unit
-- Job Family
-- Job Level
-
-### `mart_exec_pipeline`
-
-Purpose: active candidate pipeline health.
-
-Suggested grain:
-
-```text
-Business Unit + Job Family + Job Level + Recruiting Stage
-```
-
-Suggested measures:
-
-- active_candidates
-- historical_stage_conversion
-- stage_to_active_fill_yield
-- median_completed_days_in_stage
-- median_active_stage_age
-
-### `mart_exec_forecast`
-
-Purpose: actual versus projected Fill Rate.
-
-Suggested grain:
-
-```text
-THD month + Business Unit + Job Family + Job Level
-```
-
-Suggested measures:
-
-- demand
-- actual_filled_positions
-- expected_pipeline_fills
-- forecast_filled_positions
-- actual_fill_rate
-- forecast_fill_rate
-
-### `mart_exec_quality`
-
-Purpose: Executive Summary hiring-quality KPI and speed-versus-quality trend.
-
-Suggested grain:
-
-```text
-Employee Start Month + Business Unit + Job Family + Job Level
-```
-
-Suggested measures and fields:
-
-- matured_hires_60d
-- early_attrition_60d_count
-- early_attrition_60d_rate
-- median_time_to_fill_same_cohort
-- is_fully_matured_start_month
-- cohort_start_month
-- cohort_sample_size
-
-Only fully matured monthly cohorts should feed the Executive Summary trend. The KPI should aggregate the latest rolling 12 fully matured cohorts.
-
-Power BI may calculate final presentation measures in DAX, but complex row-level business logic should be produced upstream where practical and documented clearly.
-
----
+Forecast shares `mart_exec_demand`; do not create a separate forecast mart. Store
+additive quantities for Power BI ratios and calculate medians from facts. Stored
+mart rates/medians are hidden row-grain validation references only. Quality uses
+fully matured cohorts; the KPI and its numerator/denominator footer use the same
+latest-12 window. THD slicers select whole months.
 
 ## 11. Data story requirements
 
@@ -1070,7 +1020,7 @@ requested_positions = filled_positions + openings_position
 8. TOAD must be sourced from the requisition field and not silently recomputed.
 9. `accepted_offer_events = filled_positions + lost_after_acceptance_positions`.
 10. `started_positions <= filled_positions <= accepted_offer_events`.
-11. `accepted_offer_events` must never decrease for a period that is already in the past.
+11. Preserve accepted-offer events and dates after a loss. THD-period totals may change when a requisition moves period, segment or cancellation status; they are not immutable event-time totals.
 12. A requisition moving from `filled` back to `open` after a post-acceptance loss is a valid transition and must not be flagged as an error.
 
 ### Date rules
@@ -1094,7 +1044,7 @@ requested_positions = filled_positions + openings_position
 6. `offer_rescinded` is reserved for an employer rescind **after** acceptance and always implies an acceptance event. The value `offer_rescinded` must not appear as a stage exit reason, because a post-acceptance loss is not a stage exit.
 7. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
 8. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
-9. Historical conversion outcomes must be reproducible: re-running the pipeline on an unchanged as-of date must return the same offer-stage conversion, even after post-acceptance losses have been loaded.
+9. Unchanged input and as-of configuration reproduce historical conversion. Adding only a post-acceptance loss must preserve the successful acceptance exit for that application. Changed reporting attributes or eligibility can legitimately restate filtered totals.
 10. One application must carry at most one governed accepted-offer event. Administrative revisions of the accepted offer are collapsed and the earliest valid acceptance event of that cycle is preserved. An application with more than one distinct acceptance cycle is quarantined for review, not loaded as-is and not silently collapsed.
 11. An audit model must record every source application arriving with more than one accepted offer version, with its resolution (`administrative_revision` or `quarantined`). Multiple accepted versions are valid, and their count alone is never a failure; it is reported for visibility. The uniqueness test on the resolved output proves only that the resolution ran, not that it was correct.
 12. Three hard tests must fail the build: any multi-version application absent from the audit model, any audit row whose resolution is neither `administrative_revision` nor `quarantined`, and any quarantined application appearing in the application fact. The first is required because a missing application is invisible to the other two.
@@ -1170,7 +1120,8 @@ executable pipeline code.
 | Repository | Owns |
 |---|---|
 | **This repository (`ta-exec-db`)** | The dashboard specification, the wireframe, the governed metric definitions, the analytics dataset contracts, and the dbt architecture the implementation must follow |
-| **Separate implementation repository** | Python synthetic-source generation, the dbt models, the executable tests, orchestration, and production of the CSV / Parquet outputs |
+| **Separate Python generator repository** | Raw ATS/HR CSV generation and source checks under `raw-data-generation-contract.md` |
+| **Separate dbt repository** | Ingestion, transformations, executable business tests and analytics CSV/Parquet exports |
 | **Power BI** | Consuming the validated outputs, and owning filter-responsive ratios, medians and presentation |
 
 The dbt architecture described in this specification and in `dbt-ownership.md` is a
@@ -1187,8 +1138,8 @@ layer that owns it.
 
 | Layer | Owns | Must not do |
 |---|---|---|
-| **Python** | Source generation: creating the synthetic ATS and HR records that simulate the source systems | Decide what a record means. Python may invent an offer acceptance date; it may not decide whether that acceptance is still an active fill |
-| **dbt** | Every transformation between source and mart: grain resolution, row-level derivations, classifications, roll-ups, the forecast, and all validation tests | Store final rates or medians as the values the report presents |
+| **Python** | Synthetic ATS/HR records, including source statuses and quantities, plus source consistency checks | Export analytics flags, risk bands, durations, forecast yields or marts |
+| **dbt** | Every transformation between source and mart: grain resolution, row-level derivations, classifications, roll-ups, the forecast, and analytics/business validation tests | Store final rates or medians as the values the report presents |
 | **Power BI** | Semantic aggregation under the user's filter context, and presentation | Re-implement any business rule, or recreate a count that requires a fact-to-fact relationship |
 
 The decisive test for a calculation: if it needs the configured as-of date, a grain the
@@ -1200,13 +1151,13 @@ column in the current filter context, it belongs in Power BI.
 
 #### Requirements on the implementation
 
-These are requirements this specification places on the separate implementation
-repository.
+These requirements apply to the separate generator and dbt repositories according
+to their responsibilities. Each records the contract release and exact commit SHA.
 
-- Python project managed with `uv` for synthetic-source generation
+- Python project managed with `uv`, using Polars, following `raw-data-generation-contract.md`
 - dbt project for all transformations, contracts and tests, following the dependency flow
   in `schemas/README.md`
-- deterministic configuration for the as-of date, read from `ref_reporting_config`; no layer reads the system clock
+- deterministic as-of configuration: generator config and manifest, dbt vars exposed through `ref_reporting_config`; dbt verifies input/config agreement; no business calculation reads the system clock
 - governed vocabulary held as seeds (recruiting stages, risk bands, hiring constraints) and referenced by models, never hard-coded in transformation code
 - clear source / staging / intermediate / fact / mart separation, with the dependency order derived from the model graph rather than maintained by hand
 - the business rules in section 12 implemented as executable tests, including custom tests for the reconciliation and temporal rules that generic tests cannot express
@@ -1247,7 +1198,7 @@ The Executive Summary data project is complete when all of the following are tru
 3. Historical actual data covers January 2024 through May 31, 2026.
 4. Requisition THDs through May 31, 2027 are preserved for future-demand analysis.
 5. Fill Rate reconciles from requested, filled, and open position quantities, where filled means active fills.
-6. Offer acceptance, active fill, and hire are modelled as three separate concepts; no metric is defined from an application status value.
+6. Offer acceptance, active fill, and hire are separate concepts derived from dated events. Validated current status may define active pipeline only.
 7. `offer_accepted_date` is preserved after an employer rescind or a candidate renege, and a seat lost after acceptance is restated as open.
 8. One application contributes at most one governed accepted-offer event: administrative revisions are collapsed, the earliest valid acceptance of the accepted cycle is preserved, ambiguous multiple-acceptance cases are quarantined for review, an audit model records every source application with multiple accepted versions and how it was resolved, the build fails on an unrecorded multi-version application, an unclassified one, or a quarantined application reaching the fact, and the limitation plus its remedy (a separate offer-event fact) are documented.
 9. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
@@ -1269,6 +1220,26 @@ The Executive Summary data project is complete when all of the following are tru
 25. Standalone Early Attrition and all other non-Executive Summary report pages remain outside the project scope.
 
 ---
+
+### Minimum acceptance examples
+
+Implement these small fixtures in the relevant downstream repository. They test
+business behavior, not exact wireframe totals.
+
+| Case | Expected result |
+|---|---|
+| One requested seat, accepted then reneged | Accepted events 1, fills 0, losses 1, open 1; original Time to Fill and successful Offer exit remain |
+| Replacement application accepts that seat | Accepted events 2, fills 1, losses 1, open 0; Fill Rate 100%, historical acceptance/demand ratio may exceed 100% |
+| Cancel that unstarted demand after rescinding its offer | Delivery eligibility false; no contribution to delivery metrics; original events remain available for audit |
+| Move THD from March to April | Delivery attribution moves; accepted event ID/date do not change |
+| TOAD offsets -1, 0, 7, 8, 14, 15 days | Missed, High, High, Medium, Medium, On Track |
+| Terminations on days 0, 60, 61 after start | First two qualify, day 61 does not; monthly reporting still requires full cohort maturity |
+| Quality KPI latest-12 selection | Footer early exits / footer matured hires equals the displayed KPI; THD selection changes neither |
+| Two same-cycle administrative accepted versions | One acceptance, audit resolution administrative_revision; not a build failure |
+| Two distinct accepted cycles on one application | Quarantine and audit; no quarantined application reaches the final fact |
+| Two application IDs for one candidate/requisition after a loss | Allowed attempts; no overlapping active fills |
+| Global stage has zero training observations for an active candidate | Forecast validation fails with stage/segment identified |
+| Requisition has 3 openings and uncapped expected fills of 7 | Capped expected fills 3 |
 
 ## 16. Design principle
 

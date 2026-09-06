@@ -1,6 +1,6 @@
 dataset: mart_exec_pipeline
 layer: mart
-version: 1.0
+version: 1.2
 purpose: >
   Pipeline-health mart behind the "Pipeline Health: Snapshot vs Historical
   Performance" table. It keeps three populations side by side but separate:
@@ -16,7 +16,8 @@ primary_key: [thd_month_key, business_unit_key, job_family_key, job_level_key, r
 source: >
   Active snapshot from fct_application (is_active_pipeline, current stage).
   Historical conversion and days in stage from fct_application_stage_event
-  (is_completed rows). THD month and segment inherited from the requisition.
+  (is_completed rows). Both sources are filtered to is_delivery_eligible = true.
+  THD month and segment inherited from the resolved requisition.
 
 columns:
   - name: thd_month_key
@@ -87,7 +88,7 @@ relationships:
 
 business_rules:
   - Active volume, historical conversion and completed duration are different populations. Conversion is never computed as active(next stage) / active(this stage).
-  - Offer-stage conversion is historical and immutable. It counts accepted-offer events, so it will normally sit above the current fill picture in mart_exec_demand; the difference is mart_exec_demand.lost_after_acceptance_positions, not an error.
+  - Successful acceptance exits are preserved after losses; filtered conversion totals can restate when requisition attribution or eligibility changes. Acceptance and active-fill counts on the same population differ by post-acceptance losses; offer conversion and demand Fill Rate have different denominators and cannot be ranked directly.
   - Candidates still in a stage are excluded from stage_completed_count, so they are never counted as failed conversions.
   - Active applications can only sit on open requisitions.
   - Stage-to-active-fill yield is not in this mart; it lives in mart_stage_yield and is applied to fct_application.
@@ -99,9 +100,9 @@ data_quality_tests:
   - {test: expression, expression: "completed_over_sla_count <= stage_completed_count"}
   - {test: accepted_range, columns: [stage_conversion_rate], min: 0, max: 1}
   - {test: expression, expression: "stage_conversion_rate = stage_advanced_count / stage_completed_count", filter: stage_completed_count > 0}
-  - {test: reconciliation, expression: "SUM(active_applications) = COUNT(fct_application WHERE is_active_pipeline) in total and per stage", severity: error}
-  - {test: reconciliation, expression: "SUM(stage_completed_count) = COUNT(fct_application_stage_event WHERE is_completed) in total and per stage", severity: error}
-  - {test: reconciliation, expression: "SUM(stage_advanced_count) = COUNT(fct_application_stage_event WHERE advanced_to_next_stage) in total and per stage"}
+  - {test: reconciliation, expression: "SUM(active_applications) = COUNT(fct_application WHERE is_delivery_eligible AND is_active_pipeline) in total and per stage", severity: error}
+  - {test: reconciliation, expression: "SUM(stage_completed_count) = COUNT(fct_application_stage_event WHERE is_delivery_eligible AND is_completed) in total and per stage", severity: error}
+  - {test: reconciliation, expression: "SUM(stage_advanced_count) = COUNT(fct_application_stage_event WHERE is_delivery_eligible AND advanced_to_next_stage) in total and per stage"}
   - {test: reconciliation, expression: "SUM(active_applications) = SUM(fct_requisition.active_pipeline_applications)"}
 
 power_bi:
@@ -112,7 +113,7 @@ power_bi:
     - name: Historical Conversion
       dax: DIVIDE(SUM(mart_exec_pipeline[stage_advanced_count]), SUM(mart_exec_pipeline[stage_completed_count]))
     - name: Median Completed Days
-      dax: MEDIAN(fct_application_stage_event[days_in_stage])   -- from the fact, honours all slicers
+      dax: CALCULATE(MEDIAN(fct_application_stage_event[days_in_stage]), fct_application_stage_event[is_delivery_eligible] = TRUE)   -- from the fact, honours all slicers
     - name: Stage SLA Days
       dax: MAX(dim_recruiting_stage[sla_days])
     - name: Share Over SLA

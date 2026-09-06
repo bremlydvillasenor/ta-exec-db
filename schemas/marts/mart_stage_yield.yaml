@@ -1,6 +1,6 @@
 dataset: mart_stage_yield
 layer: mart
-version: 1.1
+version: 1.2
 purpose: >
   Historical stage-to-active-fill yield lookup used by the Forecast Fill Rate.
   For each segment and stage it stores the probability that a candidate who
@@ -12,13 +12,15 @@ purpose: >
   Forecast Fill Rate stays comparable with Fill Rate. It is deliberately not filtered by THD: it is a training
   table, not a reporting view. Exposed to Power BI for transparency and tooltips only.
 
-grain: One row per Business Unit + Job Family + Job Level + Recruiting Stage combination that exists on any requisition.
+grain: One row per requisition segment (Business Unit + Job Family + Job Level) and recruiting stage with at least one global eligible training observation. Every active application must resolve to one row; missing global support for its stage fails validation.
 
 primary_key: [business_unit_key, job_family_key, job_level_key, recruiting_stage_key]
 
 source: >
-  fct_application_stage_event (stage entries) joined to fct_application
-  (has_final_outcome, is_active_fill). Fallback thresholds from
+  fct_application_stage_event (stage entries) joined to int_application__events
+  (is_yield_training_eligible, is_active_fill). Never read the final application
+  fact here; final-fact references in tests are post-build reconciliation only.
+  Fallback thresholds from
   ref_reporting_config.forecast_min_segment_observations.
 
 columns:
@@ -37,7 +39,7 @@ columns:
   - name: entered_stage_count
     type: integer
     nullable: false
-    description: Applications with has_final_outcome = true that entered this stage at least once, in this exact segment.
+    description: Applications with is_yield_training_eligible = true that entered this stage at least once, in this exact segment.
   - name: reached_active_fill_count
     type: integer
     nullable: false
@@ -68,6 +70,9 @@ columns:
       Segment that supplied applied_yield. Fallback order:
       bu_jf_jl (exact) -> jf_jl (drop Business Unit) -> jf (Job Family only) -> all (global by stage).
       The first level with entered_stage_count >= forecast_min_segment_observations is used.
+      Global stage may be used below threshold only with at least one observation,
+      with a low-support warning. Zero global observations for a required active
+      segment/stage fail forecast validation; do not substitute a probability.
     accepted_values: [bu_jf_jl, jf_jl, jf, all]
   - name: applied_observations
     type: integer
@@ -85,7 +90,8 @@ relationships:
   - {to: dim_recruiting_stage, columns: {recruiting_stage_key: recruiting_stage_key}, cardinality: many_to_one, active: true}
 
 business_rules:
-  - Training population = applications with a final outcome on or before the as-of date. Active applications are excluded, so nobody still in process is treated as a failure and no future outcome leaks in.
+  - This is an as-of baseline using observed losses, not a fully matured eventual-outcome probability. Existing pending fills are assumed to remain filled.
+  - Training population = is_yield_training_eligible applications on or before as_of_date, including pending starts as provisional successes. Active recruiting applications are excluded. Training is independent of THD and delivery eligibility; pending-start loss outcomes remain incompletely observed.
   - The training LABEL is is_active_fill. An accepted offer later rescinded or reneged trains as a failure because the forecast predicts seats that will actually be filled, and it is added to filled_positions, which is itself an active-fill count.
   - The label is deliberately not is_offer_accepted_event (that would over-predict current fill) and not is_started (that would treat every accepted offer awaiting a start date as a failure and add HR start lag to a TA delivery forecast).
   - reached_active_fill_count <= reached_acceptance_event_count. The difference is post-acceptance loss and is expected to be small; a large or growing gap is a signal worth reporting, not a data error.
@@ -95,6 +101,8 @@ business_rules:
   - Every active application in fct_application must find exactly one row here for its segment + current stage.
 
 data_quality_tests:
+  - {test: expression, expression: "applied_observations > 0", severity: error}
+  - {test: expression, expression: "applied_observations >= forecast_min_segment_observations", severity: warn, notes: Low-support global fallback must be disclosed.}
   - {test: unique, columns: [business_unit_key, job_family_key, job_level_key, recruiting_stage_key]}
   - {test: not_null, columns: [entered_stage_count, reached_active_fill_count, reached_acceptance_event_count, applied_yield, yield_segment_level, applied_observations]}
   - {test: accepted_range, columns: [observed_yield, applied_yield], min: 0, max: 1}
@@ -105,8 +113,8 @@ data_quality_tests:
   - {test: expression, expression: "applied_yield for offer stage >= applied_yield for interview stage within the same segment", severity: warn}
   - {test: reconciliation, expression: "every (segment, current stage) of active fct_application rows exists here", severity: error}
   - {test: reconciliation, expression: "fct_application.stage_to_active_fill_yield = applied_yield for the matching row"}
-  - {test: reconciliation, expression: "SUM(reached_active_fill_count) at the offer stage = COUNT(fct_application WHERE has_final_outcome AND is_active_fill)"}
-  - {test: reconciliation, expression: "SUM(reached_acceptance_event_count) at the offer stage = COUNT(fct_application WHERE has_final_outcome AND is_offer_accepted_event)"}
+  - {test: reconciliation, expression: "SUM(reached_active_fill_count) at the offer stage = COUNT(fct_application WHERE is_yield_training_eligible AND is_active_fill)"}
+  - {test: reconciliation, expression: "SUM(reached_acceptance_event_count) at the offer stage = COUNT(fct_application WHERE is_yield_training_eligible AND is_offer_accepted_event)"}
 
 power_bi:
   hide_table: true

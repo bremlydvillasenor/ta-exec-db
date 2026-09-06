@@ -1,6 +1,6 @@
 dataset: mart_exec_quality
 layer: mart
-version: 1.1
+version: 1.2
 purpose: >
   Hiring-quality mart behind the 60-Day Early Attrition KPI and the Speed vs
   60-Day Early Attrition dual-axis chart. It aggregates fct_hire_outcome by
@@ -78,11 +78,12 @@ business_rules:
   - Date basis is employee start month. No relationship to dim_date, so the THD slicer cannot reach this table.
   - The KPI is a weighted aggregate: SUM(early_attrition_60d_count) / SUM(matured_hires_60d) over rows where kpi_cohort_window = latest_12. It is never the average of the twelve monthly rates.
   - The trend shows only rows with kpi_cohort_window = latest_12 (12 fully matured cohorts). The prior_12 window supports the period-over-period comparison.
-  - Speed and quality on the chart come from the same hires: median Time to Fill uses the matured hires of the cohort, not THD-based accepted offers. It therefore covers fewer accepted offers than EXEC-05, which keeps every acceptance event including those that never became a start. That difference is expected and must not be "corrected" by adding non-started accepted offers to a cohort.
+  - Speed and quality on the chart come from the same hires: median Time to Fill uses the matured hires of the cohort, not THD-based accepted offers. Its date role and cancellation eligibility differ from EXEC-05, so neither population is necessarily smaller under independent filters. Never add non-started offers to a quality cohort.
   - A candidate renege or an employer rescind is a pre-start loss and can never appear as early attrition. Only a termination after a real employee start does.
   - The chart is diagnostic association, not causation.
 
 data_quality_tests:
+  - {test: reconciliation, expression: "KPI footer early exits and matured hires both use latest_12 and their ratio equals the KPI under every supported segment selection"}
   - {test: unique, columns: [cohort_month_key, business_unit_key, job_family_key, job_level_key]}
   - {test: not_null, columns: [cohort_month_key, is_fully_matured_start_month, kpi_cohort_window, started_hires, matured_hires_60d, early_attrition_60d_count]}
   - {test: expression, expression: "early_attrition_60d_count <= matured_hires_60d"}
@@ -105,8 +106,12 @@ power_bi:
       dax: SUM(mart_exec_quality[early_attrition_60d_count])
     - name: 60-Day Early Attrition
       dax: DIVIDE([Early Exits 60d], [Matured Hires 60d])
+    - name: Early Exits 60d (KPI)
+      dax: CALCULATE([Early Exits 60d], dim_start_cohort[kpi_cohort_window] = "latest_12")
+    - name: Matured Hires 60d (KPI)
+      dax: CALCULATE([Matured Hires 60d], dim_start_cohort[kpi_cohort_window] = "latest_12")
     - name: 60-Day Early Attrition (KPI)
-      dax: CALCULATE([60-Day Early Attrition], dim_start_cohort[kpi_cohort_window] = "latest_12")
+      dax: DIVIDE([Early Exits 60d (KPI)], [Matured Hires 60d (KPI)])
     - name: 60-Day Early Attrition (Prior 12)
       dax: CALCULATE([60-Day Early Attrition], dim_start_cohort[kpi_cohort_window] = "prior_12")
     - name: Early Attrition Target
@@ -118,7 +123,7 @@ power_bi:
     - name: Is Low Volume Cohort
       dax: "[Matured Hires 60d] < MAX(ref_reporting_config[min_cohort_size])"
   visuals:
-    - KPI card "60-Day Early Attrition" = [60-Day Early Attrition (KPI)] vs [Early Attrition Target]; footer = [Early Exits 60d] / [Matured Hires 60d] and [Latest Matured Cohort].
+    - KPI card "60-Day Early Attrition" = [60-Day Early Attrition (KPI)] vs [Early Attrition Target]; footer = [Early Exits 60d (KPI)] / [Matured Hires 60d (KPI)] and [Latest Matured Cohort].
     - Dual-axis line chart, x = dim_start_cohort[cohort_month_label], visual filter kpi_cohort_window = "latest_12"; left axis [Median Time to Fill (Start Cohort)], right axis [60-Day Early Attrition]; tooltip/data label [Matured Hires 60d]; use [Is Low Volume Cohort] for conditional formatting or suppression.
   notes: >
     Both quality visuals must be excluded from the THD slicer, which happens naturally

@@ -1,6 +1,6 @@
 dataset: fct_application_stage_event
 layer: fact
-version: 1.1
+version: 1.2
 purpose: >
   Stage-movement fact: one row each time an application enters a recruiting
   stage. It is the source of historical stage-to-stage conversion, completed
@@ -19,10 +19,16 @@ unique_keys:
   - [application_key, stage_sequence_number]
 
 source: >
-  Applicant tracking system stage history, restricted to entries on or before
-  as_of_date. Requisition attributes inherited from fct_requisition via the application.
+  int_stage_event__sequenced, built from staged ATS history, int_application__events
+  and the recruiting-stage seed. Requisition attributes/eligibility originate in
+  int_requisition__resolved_snapshot. Final fact references below are post-build
+  reconciliation only; this model does not read fct_application or fct_requisition.
 
 columns:
+  - name: is_delivery_eligible
+    type: boolean
+    nullable: false
+    description: NOT is_cancelled on the resolved requisition at as_of_date. Filter delivery/pipeline/offer-context measures with this flag; quality retains actual hires regardless of this flag.
   - name: stage_event_key
     type: integer
     nullable: false
@@ -124,6 +130,7 @@ relationships:
   - {to: fct_application, columns: {application_key: application_key}, cardinality: many_to_one, active: false, notes: Logical only; not modelled in Power BI.}
 
 business_rules:
+  - Retain ineligible rows for audit. Delivery/pipeline measures require is_delivery_eligible; quality does not. THD and segment attribution use the resolved as-of requisition and may restate.
   - Stage Conversion for stage S = SUM(advanced_to_next_stage) / COUNT(is_completed) over rows in S. Rows with is_completed = false are excluded from both numerator and denominator.
   - Offer-stage conversion counts the accepted-offer EVENT. An accepted offer stays a successful conversion even if the offer is later rescinded, the candidate reneges, or the person never starts. Historical conversion measures what the recruiting process achieved; current fill status is a separate concept on fct_requisition.
   - Post-acceptance events (employer rescind, candidate renege, employee start) create no rows here and change no existing row. They are application-level state, not stage movement.
@@ -135,6 +142,8 @@ business_rules:
   - No stage_entry_date or stage_exit_date after as_of_date.
 
 data_quality_tests:
+  - {test: not_null, columns: [is_delivery_eligible]}
+  - {test: reconciliation, expression: "is_delivery_eligible = NOT fct_requisition.is_cancelled for the matching requisition", severity: error}
   - {test: unique, columns: [stage_event_key]}
   - {test: unique, columns: [application_key, stage_sequence_number]}
   - {test: unique, columns: [application_key, recruiting_stage_key, stage_entry_date]}
@@ -157,17 +166,17 @@ data_quality_tests:
   - {test: referential_integrity, description: All dimension keys exist; application_key exists in fct_application.}
 
 power_bi:
-  hide_columns: [stage_event_key, application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key]
+  hide_columns: [is_delivery_eligible, stage_event_key, application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, recruiting_stage_key]
   summarization_off: [days_in_stage, active_stage_age_days, stage_sequence_number, sla_days]
   measures:
     - name: Stage Completed Count
-      dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[is_completed] = TRUE)
+      dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[is_delivery_eligible] = TRUE, fct_application_stage_event[is_completed] = TRUE)
     - name: Stage Advanced Count
-      dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[advanced_to_next_stage] = TRUE)
+      dax: CALCULATE(COUNTROWS(fct_application_stage_event), fct_application_stage_event[is_delivery_eligible] = TRUE, fct_application_stage_event[advanced_to_next_stage] = TRUE)
     - name: Stage Conversion
       dax: DIVIDE([Stage Advanced Count], [Stage Completed Count])   -- offer stage = accepted-offer events / completed offer exits
     - name: Median Completed Days in Stage
-      dax: MEDIAN(fct_application_stage_event[days_in_stage])   -- open rows are blank and ignored
+      dax: CALCULATE(MEDIAN(fct_application_stage_event[days_in_stage]), fct_application_stage_event[is_delivery_eligible] = TRUE)   -- open rows are blank and ignored
   notes: >
     Governed source for stage conversion and median days in stage under any slicer combination.
     mart_exec_pipeline reconciles to these measures at its grain.

@@ -1,5 +1,6 @@
 # Executive Summary data contracts
 
+Contract release 1.2. Follow the authority order in the root `README.md`; dataset YAML governs analytics shapes and the wireframe is last.
 This folder holds the analytics-ready data contracts for the TA Executive Summary page.
 `spec.md` and `wireframe.html` are the source of truth; these YAML files translate them
 into a small, governed star schema that Power BI can load without rebuilding business logic.
@@ -203,6 +204,10 @@ Modelling rules:
 - Rates are always `DIVIDE(SUM(numerator), SUM(denominator))`. Rate columns stored in marts are row-grain reference values for validation and are hidden.
 - Medians are `MEDIAN()` over the fact (`fct_application.time_to_fill_days`, `fct_application_stage_event.days_in_stage`, `fct_hire_outcome.time_to_fill_days`). Stored medians in marts are row-grain reference values only, because medians cannot be re-aggregated.
 - Targets come from `ref_reporting_config`, never from mart columns.
+- Applications, stage events and hires carry `is_delivery_eligible` from the resolved non-cancelled requisition. Delivery/pipeline fact measures filter it; their marts filter upstream. Quality retains all actual hires independently of cancellation.
+- THD/segment attribution is restated from the as-of requisition snapshot. Preserved events do not guarantee frozen period totals.
+- The attrition KPI and footer use explicit latest-12 measures. Base quality measures remain available for cohort trends.
+- Build-source declarations name intermediate inputs. Final-fact reconciliation links are tests run after models exist, not circular build dependencies.
 
 ## Date-role behaviour
 
@@ -256,13 +261,14 @@ Stage by stage:
    resolution belongs here, before anything counts an acceptance.
 2. **Application events** — the intermediate application model:
    `is_offer_accepted_event`, `is_active_fill`, `is_started`, `post_acceptance_outcome`,
-   `time_to_fill_days`, `is_active_pipeline`, `has_final_outcome`. Derived from dated
-   events, never from a status value; `offer_accepted_date` is never overwritten when a
+   `time_to_fill_days`, `is_active_pipeline`, `has_final_outcome`,
+   `is_yield_training_eligible`, `is_delivery_eligible`. Derived from dated
+   events for acceptance/start/loss, and validated as-of status for active pipeline; `offer_accepted_date` is never overwritten when a
    rescind or renege is loaded. No yield is applied yet.
 3. **Sequenced stage events** — `fct_application_stage_event`: stage sequence, completion,
    `days_in_stage`, and `advanced_to_next_stage`, where the offer stage converts on the
    acceptance event rather than on current fill state.
-4. **Stage yield** — `mart_stage_yield`, trained only on applications with a final outcome
+4. **Stage yield** — `mart_stage_yield`, trained on `int_application__events.is_yield_training_eligible` applications
    on or before the as-of date, label `is_active_fill`, with the documented segment
    fallback.
 5. **Final application fact** — `fct_application`: the application events plus
@@ -300,13 +306,13 @@ keeping a numbered list correct by hand.
 5. **Offer data is integrated into `fct_application`, on a one-acceptance-per-application assumption.** The page needs accepted/declined/rescinded/reneged/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual. This holds only because one application yields at most one governed accepted-offer event, so the offer columns describe a single event rather than a repeated group. Offer versions before final acceptance are resolved upstream. The moment multiple acceptance or re-offer cycles per application are required, that trade-off flips: build a separate offer-event fact rather than adding more offer columns here.
 6. **Three pipeline populations stay separate.** Active snapshot (`fct_application.is_active_pipeline`), completed historical conversion (`fct_application_stage_event.is_completed`, `advanced_to_next_stage`) and completed durations (`days_in_stage`). Rows with a null exit date are excluded from conversion, so candidates still in process are never failed conversions. Active age is a separate column from completed duration.
 7. **Stage flow and SLA are governed in `dim_recruiting_stage` seed rows.** Transformation code reads the dimension rather than hard-coding stage names.
-8. **Forecast is trained and capped upstream.** `mart_stage_yield` uses only applications with a final outcome on or before the as-of date (no future leakage), with fallback `bu_jf_jl → jf_jl → jf → all` when a segment has fewer than `forecast_min_segment_observations`. Yield is applied per active candidate, summed per requisition and capped at `openings_position` on `fct_requisition`. Power BI only sums the capped value.
+8. **Forecast is trained and capped upstream.** `mart_stage_yield` uses `is_yield_training_eligible` from the intermediate application model (baseline non-active outcomes, including provisional pending starts), with fallback `bu_jf_jl → jf_jl → jf → all` when a segment has fewer than `forecast_min_segment_observations`. Yield is applied per active candidate, summed per requisition and capped at `openings_position` on `fct_requisition`. Power BI only sums the capped value. Global stage fallback requires at least one observation and warns below the support threshold. This baseline reflects observed losses to date, not fully observed pending-start outcomes.
 9. **Demand and forecast share one mart.** `mart_exec_demand` holds requested / filled / open plus expected pipeline fills and forecast filled positions at the same THD-month grain. A separate `mart_exec_forecast` would duplicate the same rows and keys.
-10. **Quality is start-cohort based and structurally isolated from THD.** `dim_start_cohort` owns maturity and the rolling-12 window; `fct_hire_outcome` and `mart_exec_quality` connect only to it. The KPI is a weighted ratio (SUM of early exits / SUM of matured hires across the latest 12 matured cohorts), never an average of monthly rates.
+10. **Quality is start-cohort based and structurally isolated from THD.** `dim_start_cohort` owns maturity and the rolling-12 window; `fct_hire_outcome` and `mart_exec_quality` connect only to it. The KPI is a weighted ratio (SUM of early exits / SUM of matured hires across the latest 12 matured cohorts), never an average of monthly rates. Its footer uses the same explicit latest-12 counts.
 11. **Speed vs Quality uses the same hires.** `fct_hire_outcome.time_to_fill_days` is the Time to Fill of each started hire, so the median per start cohort describes exactly the hires in the attrition rate for that cohort. This is different from the THD-based Median Time to Fill KPI, and both are documented as such.
 12. **Medians are computed in Power BI from facts.** Marts store medians only as row-grain reference values for validation. This keeps every median correct under any slicer combination.
 13. **One word, one meaning, for offer losses.** `offer_withdrawn` (employer, before acceptance), `offer_rescinded` (employer, after acceptance), `offer_declined` (candidate, before acceptance) and `candidate_renege` (candidate, after acceptance) are reserved and never interchanged. Before-acceptance losses never had an acceptance event and cannot affect any fill or delivery metric; after-acceptance losses reduce current fill while leaving history intact. `fct_application_stage_event.exit_reason` carries only the two pre-acceptance offer terms, because a post-acceptance loss is not a stage exit.
-14. **Event and state are separate columns, not one status.** `application_status_current` is mutable and describes the seat today. `is_offer_accepted_event`, `is_offer_rescinded`, `is_candidate_renege` and `is_started` are dated events and never move backwards. No metric is allowed to be defined from a status value - that is exactly how "accepted offer" and "hired" were conflated before. The status value `hired` was removed for this reason and replaced by `offer_accepted` (accepted, not started yet) and `started` (actually started).
+14. **Event and state are separate columns, not one status.** `application_status_current` is mutable and describes the seat today. `is_offer_accepted_event`, `is_offer_rescinded`, `is_candidate_renege` and `is_started` are dated events and never move backwards. Historical events must not be inferred from mutable status text. Validated as-of status may define active pipeline. The status value `hired` was removed for this reason and replaced by `offer_accepted` (accepted, not started yet) and `started` (actually started).
 15. **A post-acceptance loss reopens the seat, it does not erase the history.** When an accepted offer is rescinded or reneged: `filled_positions` falls by one, `openings_position` rises by one (so `requested_positions` is unchanged), `lost_after_acceptance_positions` rises by one, and `accepted_offer_events`, `offer_accepted_date` and `time_to_fill_days` are untouched. If the business decides not to refill the seat, it moves to `cancelled_positions` instead. A requisition going from `filled` back to `open` is a valid transition, not a data error.
 16. **What was left out on purpose:** no candidate dimension, no recruiter dimension, no offer fact, no separate forecast mart, no source-of-hire or cost data. None of these supports a visual on the Executive Summary.
 
