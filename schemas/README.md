@@ -1,12 +1,13 @@
 # Executive Summary data contracts
 
-Contract release 1.2. Follow the authority order in the root `README.md`; dataset YAML governs analytics shapes and the wireframe is last.
+Contract release 1.3. Follow the authority order in the root `README.md`; dataset YAML governs analytics shapes and the wireframe is last.
 This folder holds the analytics-ready data contracts for the TA Executive Summary page.
 `spec.md` and `wireframe.html` are the source of truth; these YAML files translate them
 into a small, governed star schema that Power BI can load without rebuilding business logic.
 
 Fixed reporting as-of date: **2026-05-31** (from `reference/ref_reporting_config.yaml`).
-Nothing reads the system clock.
+Business calculations never read the system clock. Extraction metadata is separate
+from business dates; synthetic extracted_at is configured for reproducible files.
 
 ## Core vocabulary: accepted offer, fill, hire
 
@@ -76,48 +77,26 @@ offer equals one seat, so every offer-based figure is a COUNT of applications, w
 keeps `accepted_offer_events`, `filled_positions` and `started_positions` reconcilable at
 requisition grain.
 
-Multiple offer versions before final acceptance — a revised salary, a moved start date, a
-re-issued offer letter — are offer *versions*, not separate acceptance events. The
-resolution rule is:
+Use **one current offer row per application** in each full extract. Include all
+issued offers: pending, accepted, declined, withdrawn, rescinded and reneged. An
+application with no offer has no offer row. Keep the supplied original acceptance
+date after a later loss; salary or planned-start changes update the same record.
+No offer-version or cycle-resolution model is required.
 
-1. **Collapse administrative revisions of the same accepted offer.** A corrected salary, a
-   moved start date or a re-issued letter for the offer the candidate accepted are versions
-   of one event and must not produce a second acceptance.
-2. **Preserve the earliest valid acceptance event for the accepted offer cycle.** The
-   governed acceptance date is the moment the candidate committed, not the date of the last
-   piece of paperwork.
-3. **Quarantine ambiguous multiple-acceptance cases for review.** An application carrying
-   more than one distinct acceptance cycle that cannot be resolved as revisions of a single
-   offer is held for review — never silently collapsed, and never silently dropped.
-4. **Audit the source, not only the output — and do not fail on legitimate revisions.**
-   Multiple accepted offer versions on one source application are *expected*: rule 1 exists
-   because they occur, so their presence must never fail a build on its own. An **audit
-   model** must record every source application that arrived with more than one accepted
-   version, with its resolution — `administrative_revision` or `quarantined` — and why. A
-   uniqueness test on the resolved output only proves that the resolution ran; the audit
-   model is what shows whether a real second acceptance was discarded.
-5. **Fail hard on the three cases that mean something is wrong.** A multi-version
-   application **missing from the audit model** — it was never classified, and no test that
-   reads the model can see it; one recorded but left neither resolved nor quarantined; and a
-   quarantined application reaching `fct_application`. The count of multi-version
-   applications is reported, never gated on.
-6. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
+`application_id` identifies the offer row. `updated_at` records a source change;
+`extracted_at` records export time. Repeated rows in different dated extracts are
+snapshots of the same record, not additional acceptances. Duplicate keys within
+one extract fail validation rather than being silently deduplicated.
 
-Resolution happens **upstream**, at the resolved-sources stage of the dependency flow,
-before anything counts an acceptance. The rule must be documented where it is applied.
+The source must retain lost offers or provide their status and dates in a
+supplementary export. Absence from an accepted-only report does not establish a
+rescind or renege. Never infer a loss or erase acceptance history from disappearance.
 
-Not covered today: a genuine re-offer cycle, where a candidate accepts, the offer is lost to
-a rescind or renege, and the same candidate is later re-offered and accepts again for the
-same requisition. The source is expected to produce a new application for the second
-attempt.
-
-If multiple acceptance or re-offer cycles per application become a real requirement,
-**introduce a separate offer-event fact** — one row per offer event, with an offer sequence
-number and its own accepted / rescinded / reneged dates — and keep `fct_application` at one
-row per application carrying the resolved current state. Do **not** overload `fct_application`
-with `offer_accepted_date_2`, an offer array, or a repeated group of offer columns: that
-breaks the application grain and every COUNT-based identity above. The full statement lives
-in `facts/fct_application.yaml` under `assumptions.one_acceptance_per_application`.
+One acceptance per application remains a scope limit. A genuine second attempt
+uses a new application ID; the same candidate/requisition pair may repeat without
+overlapping active fills. Multiple acceptance cycles within one application are
+outside this phase. A current snapshot cannot reconstruct events never supplied
+or already overwritten by its source.
 
 ## Dataset inventory
 
@@ -257,8 +236,8 @@ Stage by stage:
    generated from the configuration, and `dim_business_unit`, `dim_job_family`,
    `dim_job_level` from source.
 1. **Resolved sources** — one row per requisition (the latest source snapshot on or before
-   the as-of date) and one governed accepted-offer event per application. Offer-version
-   resolution belongs here, before anything counts an acceptance.
+   the as-of date) plus the selected complete offers extract, one row per application
+   with an issued offer. Current-offer keys and dates are validated before counting.
 2. **Application events** — the intermediate application model:
    `is_offer_accepted_event`, `is_active_fill`, `is_started`, `post_acceptance_outcome`,
    `time_to_fill_days`, `is_active_pipeline`, `has_final_outcome`,
@@ -303,7 +282,7 @@ keeping a numbered list correct by hand.
 2. **Requisition attributes are inherited downward.** THD, BU, Job Family, Job Level and approval date are denormalised onto applications, stage events and hires. This gives one clean star with single-direction filters instead of snowflaked fact chains.
 3. **TOAD is source data.** `target_offer_acceptance_date` is passed through unchanged; `days_to_toad` and `risk_band_code` are computed from it and the configured as-of date, and only for open requisitions.
 4. **`requested_positions = filled_positions + openings_position`** is a hard test for every non-cancelled requisition. Withdrawn seats go to `cancelled_positions` (audit only) so the identity holds and cancelled demand never enters KPIs.
-5. **Offer data is integrated into `fct_application`, on a one-acceptance-per-application assumption.** The page needs accepted/declined/rescinded/reneged/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual. This holds only because one application yields at most one governed accepted-offer event, so the offer columns describe a single event rather than a repeated group. Offer versions before final acceptance are resolved upstream. The moment multiple acceptance or re-offer cycles per application are required, that trade-off flips: build a separate offer-event fact rather than adding more offer columns here.
+5. **Offer data is integrated into `fct_application`, on a one-acceptance-per-application assumption.** The page needs accepted/declined/rescinded/reneged/withdrawn states and the accepted date; a separate offer fact would add a relationship without adding a visual. This holds only because one application yields at most one governed accepted-offer event, so the offer columns describe a single event rather than a repeated group. Read one current offer row per application from a complete extract. Timestamp changes update that row without creating another acceptance. The moment multiple acceptance or re-offer cycles per application are required, that trade-off flips: build a separate offer-event fact rather than adding more offer columns here.
 6. **Three pipeline populations stay separate.** Active snapshot (`fct_application.is_active_pipeline`), completed historical conversion (`fct_application_stage_event.is_completed`, `advanced_to_next_stage`) and completed durations (`days_in_stage`). Rows with a null exit date are excluded from conversion, so candidates still in process are never failed conversions. Active age is a separate column from completed duration.
 7. **Stage flow and SLA are governed in `dim_recruiting_stage` seed rows.** Transformation code reads the dimension rather than hard-coding stage names.
 8. **Forecast is trained and capped upstream.** `mart_stage_yield` uses `is_yield_training_eligible` from the intermediate application model (baseline non-active outcomes, including provisional pending starts), with fallback `bu_jf_jl → jf_jl → jf → all` when a segment has fewer than `forecast_min_segment_observations`. Yield is applied per active candidate, summed per requisition and capped at `openings_position` on `fct_requisition`. Power BI only sums the capped value. Global stage fallback requires at least one observation and warns below the support threshold. This baseline reflects observed losses to date, not fully observed pending-start outcomes.

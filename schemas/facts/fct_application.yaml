@@ -1,6 +1,6 @@
 dataset: fct_application
 layer: fact
-version: 1.2
+version: 1.3
 purpose: >
   Application-grain fact describing every candidate application. It carries two
   clearly separated concepts: the CURRENT state of the application
@@ -23,7 +23,8 @@ unique_keys:
   - [application_id]
 
 source: >
-  Applicant tracking system application and offer records, restricted to events on
+  Staged application records and stg_ats__offer (one current offers.csv row per
+  application with an issued offer), restricted to events on
   or before as_of_date. Employee start dates come from the HR system. Requisition
   attributes and is_delivery_eligible come from int_requisition__resolved_snapshot
   through int_application__events. Build from int_application__events plus
@@ -72,65 +73,19 @@ assumptions:
       acceptance on the same row would double-count a seat with no way to tell the two
       events apart.
     upstream_responsibility: >
-      Multiple offer versions before final acceptance - revised salary, revised start
-      date, a re-issued offer letter, an offer amended after verbal acceptance - are
-      offer VERSIONS, not separate acceptance events. Resolution happens upstream, at the
-      resolved-sources stage, and follows these rules in order:
-        1. Collapse administrative revisions of the same accepted offer. A corrected
-           salary, a moved start date or a re-issued letter for the offer the candidate
-           accepted are versions of one event and must not create a second acceptance.
-        2. Preserve the earliest valid acceptance event for the accepted offer cycle. The
-           governed acceptance date is the moment the candidate committed, not the date of
-           the last piece of paperwork.
-        3. Quarantine ambiguous multiple-acceptance cases for review. An application with
-           more than one distinct acceptance cycle that cannot be resolved as revisions of
-           a single offer is held for review, never silently collapsed and never silently
-           dropped.
-        4. Audit the source as well as the output, without failing on legitimate revisions.
-           Multiple accepted offer versions on one source application are EXPECTED - rule 1
-           exists precisely because they occur - so their presence is never an error on its
-           own. An audit model records each such application and how it was resolved. The
-           build fails when a multi-version application is missing from the audit model,
-           when it is present but resolved as neither administrative revisions nor
-           quarantined, or when a quarantined application reaches this fact. Their COUNT
-           is reported, never gated on. The uniqueness test on the resolved output proves
-           only that the resolution ran.
-      The resolution rule belongs in the transformation, not in Power BI, and must be
-      documented where it is applied.
-    required_audit_model: >
-      The implementation must materialise an audit relation - suggested name
-      audit_offer__multi_accepted_version - holding one row per SOURCE application that
-      arrived with more than one accepted offer version:
-        application_id           the affected application
-        accepted_version_count   how many accepted versions the source delivered
-        resolution               administrative_revision | quarantined
-        resolution_notes         why, for quarantined rows
-      The relation is expected to hold rows in normal operation, because collapsing
-      administrative revisions is the designed behaviour. The COUNT of those rows is
-      reported for visibility and never gates a build. Three hard tests do gate it:
-        a. Coverage. Every source application with more than one accepted version must
-           appear in this relation. An application missing from it was never classified
-           at all, and no test that reads the relation's rows can detect its absence.
-        b. Classification. Every row must carry a resolution of administrative_revision
-           or quarantined. An unclassified row means the resolution logic did not cover
-           the case, so nobody can say whether a real second acceptance was discarded.
-        c. Containment. No application_id marked quarantined may appear in this fact.
-      Quarantined applications are reviewed by a person, never silently collapsed and
-      never silently dropped.
+      Read one current offers.csv row per application with an issued offer in the
+      selected complete extract. Join by application_id. Keep original acceptance
+      dates after rescind/renege; validate state/date consistency and unique source
+      keys. updated_at drives source-change detection and extracted_at identifies
+      the extract, not a new offer event. No version resolution or cycle audit model.
+    source_limit: >
+      Lost offers must remain in the extract or be supplied by a supplementary
+      source. Disappearance is not a dated loss event. A current snapshot cannot
+      reconstruct unobserved or overwritten events.
     what_is_not_covered: >
-      A genuine re-offer cycle - the candidate accepts, the offer is rescinded or the
-      candidate reneges, and later the SAME candidate is re-offered and accepts again
-      for the same requisition - cannot be represented on one row. Today the source is
-      expected to produce a new application for the second attempt.
-    if_this_changes: >
-      If multiple acceptance or re-offer cycles per application become a real
-      requirement, introduce a separate offer-event fact (one row per offer event, with
-      an offer sequence number and its own accepted / rescinded / reneged dates) and
-      keep fct_application at one row per application, carrying the resolved current
-      state. Do NOT overload this fact with offer_accepted_date_2, an offer array, or a
-      repeated-group of offer columns: that would break the application grain, break
-      every COUNT-based identity above, and re-introduce exactly the kind of ambiguity
-      this contract version exists to remove.
+      Multiple genuine acceptances within one application are outside this phase.
+      Reapplication after a loss uses a new application_id, with no overlapping
+      active fills for the same candidate and requisition.
 
 columns:
   - name: is_delivery_eligible
@@ -358,10 +313,10 @@ relationships:
   - {to: fct_hire_outcome, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only; a started hire references its application. Only rows with is_started = true have a match.}
 
 business_rules:
+  - One current source offer per application per extract; preserve the supplied original acceptance date after a loss. Timestamp updates and repeat extracts never create additional accepted events.
+  - No offer-version resolution or multi-version audit model is required. Multiple genuine acceptances on one application remain outside scope.
   - Retain ineligible rows for audit. Delivery/pipeline measures require is_delivery_eligible; quality does not. THD and segment attribution use the resolved as-of requisition and may restate.
   - Offer acceptance is an immutable historical event. Once offer_accepted_date is set it is never cleared, overwritten or nulled by a later rescind, renege or requisition change.
-  - One application contributes at most one governed accepted-offer event. Administrative revisions of the accepted offer are collapsed upstream and the earliest valid acceptance event of that cycle is preserved; they are offer versions, not separate events. An application carrying more than one distinct acceptance cycle is quarantined for review rather than collapsed. See assumptions.one_acceptance_per_application.
-  - Multiple accepted offer versions in the source are valid and their count alone never fails a build. Every such application must be recorded in the audit model and must carry a resolution; the build fails if one is unrecorded, if one is recorded without a valid resolution, or if a quarantined application reaches this fact. See assumptions.one_acceptance_per_application.required_audit_model.
   - Because acceptance is one-per-application, one accepted offer equals one seat. Every offer-based count in this contract is a COUNT of applications, which is what keeps accepted_offer_events, filled_positions and started_positions reconcilable at requisition grain.
   - Current status and historical event are separate columns. is_offer_accepted_event is derived from offer_accepted_date, never from application_status_current.
   - An application can be in at most one post-acceptance outcome at a time; is_offer_rescinded and is_candidate_renege are mutually exclusive.
@@ -376,6 +331,9 @@ business_rules:
   - No position quantity is stored here. Never join fct_requisition quantities onto this grain in Power BI.
 
 data_quality_tests:
+  - {test: source_key, expression: "offers.csv application_id is unique within the selected full extract", severity: error}
+  - {test: reconciliation, expression: "Offer acceptance and loss dates match the current source offer for application_id; changing planned start alone preserves acceptance date and event count", severity: error}
+  - {test: reconciliation, expression: "Replaying an extract does not add applications or accepted events; older updated_at never overwrites newer source state", severity: error}
   - {test: not_null, columns: [is_delivery_eligible]}
   - {test: reconciliation, expression: "is_delivery_eligible = NOT fct_requisition.is_cancelled for the matching requisition", severity: error}
   - {test: unique, columns: [application_key]}
@@ -391,11 +349,6 @@ data_quality_tests:
   # --- the acceptance event is immutable and independent of current status
   - {test: expression, expression: "is_offer_accepted_event = (offer_accepted_date IS NOT NULL)", severity: error}
   - {test: expression, expression: "at most one accepted-offer event per application_key - offer_accepted_date is a single scalar, never a list, and the source must not deliver two acceptance rows for one application", severity: error, notes: Guards the one-acceptance-per-application assumption. A source that can produce a second acceptance needs a separate offer-event fact, not extra columns here.}
-  - {test: reconciliation, expression: "the upstream offer resolution produced exactly one accepted offer version per application, by collapsing administrative revisions and keeping the earliest valid acceptance of the accepted cycle", severity: error}
-  - {test: source_audit, expression: "every source application carrying more than one accepted offer version has a row in audit_offer__multi_accepted_version", severity: error, store_failures: true, notes: "Coverage gate. Multiple accepted versions are valid and their presence alone never fails the build - what fails is one going UNRECORDED. An application absent from the audit model was never classified as administrative_revision or quarantined, and neither of the two tests below can see it, because both read rows that exist."}
-  - {test: metric, expression: "COUNT of source applications carrying more than one accepted offer version", severity: report_only, notes: "Not a dbt severity - this is a reported number, not a test. Trend it, do not gate on it. A rising count means more offer revisions, which is a recruiting-process observation, not a data defect."}
-  - {test: expression, expression: "every audit_offer__multi_accepted_version row has resolution IN ('administrative_revision','quarantined')", severity: error, store_failures: true, notes: "The hard failure is an UNCLASSIFIED multi-version application: the resolution logic did not cover the case, so nobody can say whether a real second acceptance was discarded."}
-  - {test: reconciliation, expression: "no application_id with audit_offer__multi_accepted_version.resolution = 'quarantined' appears in fct_application", severity: error, store_failures: true, notes: "Quarantined applications are held for human review. Letting one into the fact would count an unresolved acceptance as a seat."}
   - {test: expression, expression: "is_offer_accepted_event IS NOT derived from application_status_current; a row with application_status_current IN ('offer_rescinded','candidate_renege') still has is_offer_accepted_event = true AND offer_accepted_date IS NOT NULL", severity: error}
   - {test: expression, expression: "application_status_current IN ('offer_accepted','started','offer_rescinded','candidate_renege') implies is_offer_accepted_event = true"}
   - {test: expression, expression: "application_status_current IN ('active','rejected','withdrawn','offer_declined','offer_withdrawn') implies is_offer_accepted_event = false AND offer_accepted_date IS NULL"}

@@ -6,7 +6,7 @@
 
 contract:
   name: ta_exec_summary_metrics
-  version: 1.2
+  version: 1.3
   as_of_date: 2026-05-31          # from ref_reporting_config; never the system date
 
   # ---------------------------------------------------------------- governed vocabulary
@@ -57,9 +57,10 @@ contract:
     - Offer acceptance is a historical event; current fill is a separate state derived from acceptance and subsequent loss events, never the reverse.
     - Historical acceptance/start/loss metrics use dated events; validated as-of status may define current active pipeline.
     - Delivery, pipeline and offer-context fact measures require is_delivery_eligible = true, inherited from the resolved non-cancelled requisition. Their marts apply the same exclusion upstream. Quality retains actual hires regardless of cancellation. Yield training uses its own explicit eligibility policy.
+    - Raw updated_at/extracted_at are change and extraction metadata, not metric date bases. Business dates and the configured as-of date govern every metric.
     - THD selections use whole months. THD and segment keys reflect the resolved as-of requisition; changed attribution or cancellation can restate past-period totals without deleting historical events.
     - Historical metrics (Time to Fill, offer-stage conversion) keep an accepted offer that was later lost. Current-state metrics (Fill Rate, Positions Filled) drop it. Both behaviours are correct and intentional; the difference is reported as SUPP-07.
-    - One application contributes at most one governed accepted-offer event, so one accepted offer equals one seat and every offer-based metric is a COUNT of applications. Multiple offer versions before final acceptance are resolved upstream: administrative revisions of the accepted offer are collapsed, the earliest valid acceptance event of the accepted cycle is preserved, and an application carrying more than one distinct acceptance cycle is quarantined for review rather than collapsed. Multiple accepted versions in the source are valid and their count alone is never a failure, but every such application must appear in an audit model carrying a resolution (administrative_revision or quarantined). The build fails if one is missing from that model, if one is recorded without a valid resolution, or if a quarantined application reaches the fact. If multiple acceptance or re-offer cycles per application are ever required, they belong in a separate offer-event fact, not in extra columns on fct_application. See fct_application.assumptions.one_acceptance_per_application.
+    - One application contributes at most one accepted-offer event. Read one current offer row per application per complete extract; reject duplicate keys. Source updates and repeat extracts do not create new acceptances. Preserve acceptance after losses and retain lost-offer rows. Multiple genuine acceptances within one application are outside scope; a second attempt uses a new application_id. See fct_application.assumptions.one_acceptance_per_application.
 
 metrics:
 

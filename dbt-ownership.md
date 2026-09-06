@@ -1,6 +1,6 @@
 # dbt ownership and implementation contract
 
-Contract release: **1.2**. Follow the authority order in `README.md`. This document
+Contract release: **1.3**. Follow the authority order in `README.md`. This document
 implements the spec, metric definitions and dataset contracts; it cannot override
 them. Code belongs in the separate dbt repository, not here or in the generator.
 
@@ -35,9 +35,8 @@ model dependencies. dbt derives execution order from `ref()`.
 | Dimensions | Date/cohort spines from config; BU/JF/JL from source lookups |
 | Staging models | Normalize raw CSV names, types and source codes; preserve source events |
 | `int_requisition__resolved_snapshot` | Latest snapshot on/before as-of, one row per requisition; fail conflicting same-date snapshots |
-| `int_offer__resolved_acceptance` | Resolve versions into one governed cycle per application; retain all applicable loss dates |
-| `audit_offer__multi_accepted_version` | Audit every source application with multiple accepted versions before resolution |
-| `int_application__events` | Staged applications, resolved offers/requisitions and resolved HR events; derive flags, eligibility and Time to Fill, without yield |
+| `stg_ats__offer` | One current offer per application from the selected full extract; validate keys/status/dates and preserve losses |
+| `int_application__events` | Staged applications/offers, resolved requisitions and resolved HR events; derive flags, eligibility and Time to Fill, without yield |
 | `int_stage_event__sequenced` | Stage history, application events and stage seed; sequence visits and derive completed intervals/conversion |
 | `fct_application_stage_event` | Sequenced stage events; does not read final application/requisition facts |
 | `mart_stage_yield` | Stage-event fact plus `int_application__events`; does not read final `fct_application` |
@@ -49,15 +48,13 @@ model dependencies. dbt derives execution order from `ref()`.
 
 ## Core implementation rules
 
-- **Offer resolution:** collapse administrative revisions of one cycle and preserve
-  its earliest valid acceptance. Quarantine multiple genuine cycles. The audit
-  records `application_id`, `accepted_version_count`, `resolution` and notes.
-  Allowed resolutions are `administrative_revision` and `quarantined`. Fail if a
-  multi-version application is missing from the audit, has an invalid resolution,
-  or reaches the final fact while quarantined. Multiple legitimate revisions alone
-  are not a failure. Inspect quarantined records rather than silently dropping
-  their impact on reconciliation. Repeat candidate/requisition attempts use distinct
-  application IDs; only multiple acceptances within one application require quarantine.
+- **Current offers:** use `stg_ats__offer` from `offers.csv`, unique by application ID
+  within each extract. Changes to planned start or status update that row; keep the
+  original acceptance date after a loss. Include all issued offers, including
+  declines, withdrawals, rescinds and reneges. No version/cycle resolution or
+  dedicated audit model is needed. Reapplications use new application IDs. Reject
+  duplicate keys and inconsistent event dates rather than inventing an event.
+
 - **Reporting eligibility:** derive `is_delivery_eligible = NOT is_cancelled` from
   the resolved requisition and carry it onto applications, stage events and hires.
   Delivery, pipeline and offer-context measures use it; quality retains all actual
@@ -99,6 +96,32 @@ Record contract release/commit and the input generator manifest in the dbt run
 summary. Export validated analytics CSVs or Parquet matching the schemas. Publish
 exports only after required tests pass; a failed build must not look like a successful
 Power BI refresh. Re-running unchanged input/configuration reproduces results.
+
+## Current staging and optional incremental loading
+
+Read `updated_at` (source modification) and `extracted_at` (export metadata) from
+raw files. Keep them in staging; no new Power BI columns are required. Validate
+keys and timestamp semantics as specified in the raw contract. Full replacement
+of validated current staging is the default for this small dataset.
+
+If demonstrating incremental loading, use each source's stable key and a supported
+upsert strategy. Compare source changes with a per-source watermark plus a short
+lookback; replaying the overlap must not duplicate rows. Only newer source updates
+replace existing state. Equal timestamp/key rows with different business values
+fail validation. When real sources lack reliable updated_at, compare or reload the
+full extract instead; never substitute export time as source-change time.
+
+Select a complete extract before loading; never concatenate all dated snapshots
+and count them as offers. Check missing prior keys against full current coverage:
+no missing-row rule may fabricate a rescind/renege or silently confirm a vanished
+accepted offer as still active. Obtain explicit source outcomes or flag incomplete
+coverage and fail publication of affected delivery/forecast outputs. Historical
+snapshot rows are retained as files, if needed, rather than added to current facts.
+
+Rebuild facts/marts from current staging for this portfolio. Filtering only on
+requisition updated_at misses offer/HR changes and as-of-driven risk or maturity.
+Keep business as-of filtering separate from extraction timestamps. No SCD history
+or incremental strategy for every downstream model is required.
 
 ## Tests and portfolio evidence
 
