@@ -3,7 +3,7 @@
 Contracts for a one-page Power BI Talent Acquisition Executive Summary covering
 demand, delivery, speed, risk, pipeline and early attrition as of **2026-05-31**.
 This repository defines required behavior; executable Python and dbt projects
-live separately. Current contract release: **1.2**.
+live separately. Current contract release: **1.3**.
 
 ## Source of truth and authority
 
@@ -34,6 +34,10 @@ Wireframe numbers are illustrations, never generation targets or acceptance test
 | [Raw-data generator](https://github.com/bremlydvillasenor/ta-exec-db-data-gen) | Separate uv + Python + Polars project; synthetic ATS/HR CSVs and source validation |
 | Separate dbt repository (link to be added when created) | Ingestion, transformations, executable business tests and analytics exports |
 | Power BI report | Relationships, filter-responsive ratios and medians, presentation |
+
+Raw offer input is one current row per application in `offers.csv`; no offer-version
+resolution is required. Every synthetic raw file includes `updated_at` and
+`extracted_at`, with their different meanings defined in the raw-data contract.
 
 Both implementation repositories must record the **contract release and exact
 commit SHA** they implement. A README entry and run manifest are sufficient; no

@@ -1,6 +1,6 @@
 # TA Executive Dashboard — Project Specification
 
-Contract release: **1.2**. Source-of-truth precedence is defined in `README.md`.
+Contract release: **1.3**. Source-of-truth precedence is defined in `README.md`.
 This spec is the highest-ranked project file; the wireframe is always last.
 
 ## 1. Project overview
@@ -135,6 +135,23 @@ Examples of actual dates that must not be later than May 31, 2026:
 
 ---
 
+### Raw timestamps and current-state loading
+
+Every raw file includes `extracted_at`; mutable source rows include `updated_at`.
+The synthetic generator provides both on every raw dataset, including event and
+lookup files. These are UTC timestamps, distinct from actual/target business dates.
+`updated_at` means last source-record modification; `extracted_at` means export time.
+Only genuine source-change timestamps may drive change filtering. If unavailable
+on a real export, leave `updated_at` null and compare/reload the complete snapshot.
+
+Full extraction is the default. Incremental upserts may maintain current staging
+by stable source key and newer `updated_at`, using a small lookback and idempotent
+loading. They do not preserve old states or detect disappearing rows by themselves.
+Use dated full extracts if history is needed; no SCD framework is required here.
+Rebuild downstream facts/marts for this small portfolio so offer changes, HR events
+and as-of-driven calculations propagate even when a requisition itself did not change.
+Timestamp details and missing-row handling are in the raw-data contract.
+
 ## 5. Core business concepts
 
 ### 5.1 Requisition and position
@@ -221,47 +238,26 @@ governed accepted-offer event. One accepted offer equals one seat, and every off
 figure in this specification is a count of applications, which is what keeps accepted offer
 events, filled positions, and started positions reconcilable at requisition grain.
 
-Multiple offer versions before final acceptance — a revised salary, a moved start date, a
-re-issued offer letter — are offer *versions*, not separate acceptance events. The
-resolution rule is:
+Use **one current offer row per application** in each full extract. Include all
+issued offers: pending, accepted, declined, withdrawn, rescinded and reneged. An
+application with no offer has no offer row. Keep the supplied original acceptance
+date after a later loss; salary or planned-start changes update the same record.
+No offer-version or cycle-resolution model is required.
 
-1. **Collapse administrative revisions of the same accepted offer.** A corrected salary, a
-   moved start date or a re-issued letter for the offer the candidate accepted are versions
-   of one event and must not produce a second acceptance.
-2. **Preserve the earliest valid acceptance event for the accepted offer cycle.** The
-   governed acceptance date is the moment the candidate committed, not the date of the last
-   piece of paperwork.
-3. **Quarantine ambiguous multiple-acceptance cases for review.** An application carrying
-   more than one distinct acceptance cycle that cannot be resolved as revisions of a single
-   offer is held for review — never silently collapsed, and never silently dropped.
-4. **Audit the source, not only the output — and do not fail on legitimate revisions.**
-   Multiple accepted offer versions on one source application are *expected*: rule 1 exists
-   because they occur. Their presence must never fail the build on its own. The
-   implementation must materialise an **audit model** recording every source application
-   that arrived with more than one accepted offer version, together with how it was
-   resolved — `administrative_revision` or `quarantined` — and why. A uniqueness test on the
-   resolved output only proves that the resolution ran; the audit model is what shows
-   whether a real second acceptance was discarded.
-5. **Fail hard on the three cases that mean something is wrong.** The build must fail when
-   a multi-version application is **missing from the audit model** — it was never classified
-   at all, and no test that reads the model's rows can see it; when a recorded application
-   is resolved as neither administrative revisions nor quarantined, so nobody can say what
-   happened to it; and when an application marked quarantined reaches the final application
-   fact. Quarantined applications are reviewed by a person before anything counts them. The
-   *number* of multi-version applications is reported for visibility and never gated on.
-6. **Use a separate offer-event fact if genuine re-offer cycles are supported later.**
+`application_id` identifies the offer row. `updated_at` records a source change;
+`extracted_at` records export time. Repeated rows in different dated extracts are
+snapshots of the same record, not additional acceptances. Duplicate keys within
+one extract fail validation rather than being silently deduplicated.
 
-The resolution rule must be documented where it is applied.
+The source must retain lost offers or provide their status and dates in a
+supplementary export. Absence from an accepted-only report does not establish a
+rescind or renege. Never infer a loss or erase acceptance history from disappearance.
 
-A genuine re-offer cycle, where the same candidate accepts, is lost to a rescind or renege,
-and is later re-offered and accepts again for the same requisition, is out of scope for the
-current design; the source is expected to produce a new application for the second attempt.
-Candidate/requisition pairs may repeat across distinct application attempts;
-`application_id` is the unique attempt identifier. Prevent overlapping active fills
-for the same candidate and requisition.
-If multiple acceptance or re-offer cycles per application become a requirement, a separate
-offer-event fact must be introduced rather than adding further offer columns to the
-application fact.
+One acceptance per application remains a scope limit. A genuine second attempt
+uses a new application ID; the same candidate/requisition pair may repeat without
+overlapping active fills. Multiple acceptance cycles within one application are
+outside this phase. A current snapshot cannot reconstruct events never supplied
+or already overwritten by its source.
 
 ### 5.5 Open position
 
@@ -905,26 +901,12 @@ offer events are required for Time to Fill and offer-stage conversion; active fi
 required for positions filled, Fill Rate and forecast training labels; actual starts are
 required for hiring-quality analysis.
 
-**Cardinality assumption.** The columns above describe a single acceptance event, so one
-application must contribute at most one governed accepted-offer event. Where the source
-holds several offer versions for one application before final acceptance, the transformation
-must collapse administrative revisions of the accepted offer and preserve the earliest valid
-acceptance event of that cycle, as set out in section 5.4. An application carrying more than
-one distinct acceptance cycle that cannot be resolved this way must be quarantined for
-review, never loaded as-is and never silently collapsed. Multiple accepted offer versions in
-the source are expected and must not fail the build by themselves; instead, an audit model
-must record every application that arrived with more than one accepted version and how it
-was resolved. The hard failures are narrower: a multi-version application missing from that
-audit model, one recorded but left neither resolved nor quarantined, or a quarantined
-application reaching the application fact. The
-resolution rule must be documented where it is applied.
-
-If future requirements need multiple acceptance or re-offer cycles for a single application,
-introduce a **separate offer-event fact** — one row per offer event, with an offer sequence
-number and its own accepted, rescinded and reneged dates — and keep the application fact at
-one row per application holding the resolved current state. Do not overload the application
-fact with a second set of offer columns or a repeated group; that would break the application
-grain and every count-based reconciliation in section 12.
+**Cardinality and raw input.** Read one current `offers.csv` row per application
+with an issued offer, as defined in section 5.4 and `raw-data-generation-contract.md`.
+Join to applications by `application_id`, preserving original acceptance and loss
+dates. Validate unique keys, state/date consistency and extract completeness.
+Timestamp-based upserts update the same record; they never count as new acceptances.
+No offer-version resolution or dedicated multi-version audit model is required.
 
 ### 9.5 Hire and termination data
 
@@ -1033,6 +1015,7 @@ requested_positions = filled_positions + openings_position
 6. Termination date must not precede employee start date.
 7. `offer_rescinded_date` and `candidate_renege_date` must not precede `offer_accepted_date`.
 8. `employee_start_date` must not precede `offer_accepted_date`.
+9. Raw `updated_at` and `extracted_at` are UTC timestamps with `updated_at <= extracted_at` when present. Missing reliable source updated_at uses full comparison/reload. Extraction metadata may be later than as-of without making business events eligible.
 
 ### Offer event rules
 
@@ -1045,9 +1028,9 @@ requested_positions = filled_positions + openings_position
 7. `is_active_fill = is_offer_accepted_event AND NOT is_offer_rescinded AND NOT is_candidate_renege`.
 8. `is_started` implies an accepted-offer event and no post-acceptance loss. A person who started and then left is a termination, not a renege.
 9. Unchanged input and as-of configuration reproduce historical conversion. Adding only a post-acceptance loss must preserve the successful acceptance exit for that application. Changed reporting attributes or eligibility can legitimately restate filtered totals.
-10. One application must carry at most one governed accepted-offer event. Administrative revisions of the accepted offer are collapsed and the earliest valid acceptance event of that cycle is preserved. An application with more than one distinct acceptance cycle is quarantined for review, not loaded as-is and not silently collapsed.
-11. An audit model must record every source application arriving with more than one accepted offer version, with its resolution (`administrative_revision` or `quarantined`). Multiple accepted versions are valid, and their count alone is never a failure; it is reported for visibility. The uniqueness test on the resolved output proves only that the resolution ran, not that it was correct.
-12. Three hard tests must fail the build: any multi-version application absent from the audit model, any audit row whose resolution is neither `administrative_revision` nor `quarantined`, and any quarantined application appearing in the application fact. The first is required because a missing application is invisible to the other two.
+10. At most one acceptance per application; one current offer row per application in each extract. Duplicate source keys fail validation.
+11. Rescinded and reneged offers remain in the current offer extract with original acceptance date and appropriate loss date. Do not infer losses from missing rows.
+12. A newer source update replaces the current record for its application ID. Reprocessing the same extract creates no additional rows or acceptances; a stale row must not overwrite a newer one.
 
 ### Pipeline rules
 
@@ -1200,7 +1183,7 @@ The Executive Summary data project is complete when all of the following are tru
 5. Fill Rate reconciles from requested, filled, and open position quantities, where filled means active fills.
 6. Offer acceptance, active fill, and hire are separate concepts derived from dated events. Validated current status may define active pipeline only.
 7. `offer_accepted_date` is preserved after an employer rescind or a candidate renege, and a seat lost after acceptance is restated as open.
-8. One application contributes at most one governed accepted-offer event: administrative revisions are collapsed, the earliest valid acceptance of the accepted cycle is preserved, ambiguous multiple-acceptance cases are quarantined for review, an audit model records every source application with multiple accepted versions and how it was resolved, the build fails on an unrecorded multi-version application, an unclassified one, or a quarantined application reaching the fact, and the limitation plus its remedy (a separate offer-event fact) are documented.
+8. One current offer row per application supports at most one acceptance. Preserve acceptance through losses, validate unique extract keys and update timestamps, and merge without duplicating events.
 9. Median Time to Fill uses approval-to-offer-acceptance duration, over every accepted-offer event including those later rescinded or reneged.
 10. Open-position risk is based on source TOAD and the configured as-of date.
 11. High Risk is 0–7 days to TOAD; Medium Risk is 8–14 days; Missed is below 0.
@@ -1235,8 +1218,11 @@ business behavior, not exact wireframe totals.
 | TOAD offsets -1, 0, 7, 8, 14, 15 days | Missed, High, High, Medium, Medium, On Track |
 | Terminations on days 0, 60, 61 after start | First two qualify, day 61 does not; monthly reporting still requires full cohort maturity |
 | Quality KPI latest-12 selection | Footer early exits / footer matured hires equals the displayed KPI; THD selection changes neither |
-| Two same-cycle administrative accepted versions | One acceptance, audit resolution administrative_revision; not a build failure |
-| Two distinct accepted cycles on one application | Quarantine and audit; no quarantined application reaches the final fact |
+| Changed planned start on an existing offer | Same application row and original acceptance date; newer updated_at, no extra acceptance |
+| Same full extract loaded twice | Identical row counts and business results |
+| Older update arrives after a newer row | Current row does not regress |
+| Duplicate offer application_id within one extract | Source-key validation fails |
+| Previously supplied offer disappears with no explicit outcome | Flag incomplete source coverage; do not invent a loss or silently retain it as a confirmed active fill |
 | Two application IDs for one candidate/requisition after a loss | Allowed attempts; no overlapping active fills |
 | Global stage has zero training observations for an active candidate | Forecast validation fails with stage/segment identified |
 | Requisition has 3 openings and uncapped expected fills of 7 | Capped expected fills 3 |
