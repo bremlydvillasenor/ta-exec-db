@@ -1,6 +1,6 @@
 dataset: fct_application
 layer: fact
-version: 1.1
+version: 1.2
 purpose: >
   Application-grain fact describing every candidate application. It carries two
   clearly separated concepts: the CURRENT state of the application
@@ -14,20 +14,21 @@ purpose: >
   Offer data is integrated here rather than in a separate offer fact.
 
 grain: >
-  One row per application (one candidate applying to one requisition), state as of
+  One row per application attempt (candidate/requisition pairs may repeat), state as of
   2026-05-31. At most ONE governed accepted-offer event per row - see
   assumptions.one_acceptance_per_application.
 
 primary_key: [application_key]
 unique_keys:
   - [application_id]
-  - [candidate_id, requisition_id]
 
 source: >
   Applicant tracking system application and offer records, restricted to events on
   or before as_of_date. Employee start dates come from the HR system. Requisition
-  attributes (THD, segment keys, approval date) are denormalised from fct_requisition.
-  Yield columns come from mart_stage_yield.
+  attributes and is_delivery_eligible come from int_requisition__resolved_snapshot
+  through int_application__events. Build from int_application__events plus
+  mart_stage_yield. References to final facts in tests are post-build reconciliation
+  only, not inputs to the intermediate models.
 
 semantics:
   offer_accepted: >
@@ -132,6 +133,10 @@ assumptions:
       this contract version exists to remove.
 
 columns:
+  - name: is_delivery_eligible
+    type: boolean
+    nullable: false
+    description: NOT is_cancelled on the resolved requisition at as_of_date. Filter delivery/pipeline/offer-context measures with this flag; quality retains actual hires regardless of this flag.
   # keys
   - name: application_key
     type: integer
@@ -200,7 +205,11 @@ columns:
   - name: has_final_outcome
     type: boolean
     nullable: false
-    description: NOT is_active_pipeline. Rows eligible for historical conversion and yield training.
+    description: NOT is_active_pipeline. A recruiting outcome as of the reporting date, not necessarily a settled pre-start outcome. Stage conversion eligibility depends on completed stage intervals, not this flag.
+  - name: is_yield_training_eligible
+    type: boolean
+    nullable: false
+    description: Baseline policy equals has_final_outcome. Includes pending starts as provisional active-fill successes; later losses are not fully observed. Separate flag so training eligibility is not implicit in current pipeline status.
   - name: disposition_reason
     type: string
     nullable: true
@@ -349,6 +358,7 @@ relationships:
   - {to: fct_hire_outcome, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only; a started hire references its application. Only rows with is_started = true have a match.}
 
 business_rules:
+  - Retain ineligible rows for audit. Delivery/pipeline measures require is_delivery_eligible; quality does not. THD and segment attribution use the resolved as-of requisition and may restate.
   - Offer acceptance is an immutable historical event. Once offer_accepted_date is set it is never cleared, overwritten or nulled by a later rescind, renege or requisition change.
   - One application contributes at most one governed accepted-offer event. Administrative revisions of the accepted offer are collapsed upstream and the earliest valid acceptance event of that cycle is preserved; they are offer versions, not separate events. An application carrying more than one distinct acceptance cycle is quarantined for review rather than collapsed. See assumptions.one_acceptance_per_application.
   - Multiple accepted offer versions in the source are valid and their count alone never fails a build. Every such application must be recorded in the audit model and must carry a resolution; the build fails if one is unrecorded, if one is recorded without a valid resolution, or if a quarantined application reaches this fact. See assumptions.one_acceptance_per_application.required_audit_model.
@@ -362,18 +372,22 @@ business_rules:
   - Active fills reconcile to positions filled - COUNT(is_active_fill) per requisition = fct_requisition.filled_positions. Accepted-offer events reconcile to fct_requisition.accepted_offer_events.
   - Time to Fill uses every accepted-offer event, keeps offers later rescinded or reneged in the population, and is never negative.
   - Only rows with is_started = true are hires. Accepted offers awaiting a start date are not hires and are not in fct_hire_outcome.
-  - Active candidates are neither successes nor failures for conversion; they are excluded from historical conversion and yield training (has_final_outcome = false).
+  - Open stage intervals are excluded from conversion; completed earlier stages on still-active applications remain eligible. Active applications are excluded from yield training (is_yield_training_eligible = false).
   - No position quantity is stored here. Never join fct_requisition quantities onto this grain in Power BI.
 
 data_quality_tests:
+  - {test: not_null, columns: [is_delivery_eligible]}
+  - {test: reconciliation, expression: "is_delivery_eligible = NOT fct_requisition.is_cancelled for the matching requisition", severity: error}
   - {test: unique, columns: [application_key]}
   - {test: unique, columns: [application_id]}
-  - {test: unique, columns: [candidate_id, requisition_id]}
+  - {test: expression, expression: "At most one is_active_fill application per candidate_id and requisition_id; repeat attempts with different application_id are allowed", severity: error}
   - {test: not_null, columns: [application_key, candidate_id, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key, application_status_current, is_offer_accepted_event, is_active_fill, is_offer_rescinded, is_candidate_renege, is_started, application_date, current_stage_entry_date, requisition_approval_date]}
   - {test: accepted_values, column: application_status_current, values: [active, offer_accepted, started, rejected, withdrawn, offer_declined, offer_withdrawn, offer_rescinded, candidate_renege]}
   - {test: accepted_values, column: post_acceptance_outcome, values: [pending_start, started, candidate_renege, employer_rescind, null]}
   - {test: expression, expression: "is_active_pipeline = (application_status_current = 'active')"}
   - {test: expression, expression: "has_final_outcome = NOT is_active_pipeline"}
+  - {test: not_null, columns: [has_final_outcome, is_active_pipeline, is_yield_training_eligible]}
+  - {test: expression, expression: "is_yield_training_eligible = has_final_outcome"}
   # --- the acceptance event is immutable and independent of current status
   - {test: expression, expression: "is_offer_accepted_event = (offer_accepted_date IS NOT NULL)", severity: error}
   - {test: expression, expression: "at most one accepted-offer event per application_key - offer_accepted_date is a single scalar, never a list, and the source must not deliver two acceptance rows for one application", severity: error, notes: Guards the one-acceptance-per-application assumption. A source that can produce a second acceptance needs a separate offer-event fact, not extra columns here.}
@@ -433,21 +447,21 @@ data_quality_tests:
   - {test: referential_integrity, description: All dimension keys exist; requisition_key exists in fct_requisition.}
 
 power_bi:
-  hide_columns: [application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key]
+  hide_columns: [is_yield_training_eligible, is_delivery_eligible, application_key, requisition_key, thd_date_key, business_unit_key, job_family_key, job_level_key, current_recruiting_stage_key]
   summarization_off: [time_to_fill_days, active_stage_age_days, stage_to_active_fill_yield]
   measures:
     - name: Median Time to Fill
-      dax: MEDIAN(fct_application[time_to_fill_days])   -- blanks (no acceptance event) are ignored; rescinded and reneged accepted offers stay in
+      dax: CALCULATE(MEDIAN(fct_application[time_to_fill_days]), fct_application[is_delivery_eligible] = TRUE)   -- blanks (no acceptance event) are ignored; rescinded and reneged accepted offers stay in
     - name: Active Candidates
-      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_active_pipeline] = TRUE)
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_delivery_eligible] = TRUE, fct_application[is_active_pipeline] = TRUE)
     - name: Accepted Offer Events
-      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_offer_accepted_event] = TRUE)
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_delivery_eligible] = TRUE, fct_application[is_offer_accepted_event] = TRUE)
     - name: Active Fills
-      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_active_fill] = TRUE)
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_delivery_eligible] = TRUE, fct_application[is_active_fill] = TRUE)
     - name: Post-Acceptance Losses
-      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_offer_accepted_event] = TRUE, fct_application[is_active_fill] = FALSE)
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_delivery_eligible] = TRUE, fct_application[is_offer_accepted_event] = TRUE, fct_application[is_active_fill] = FALSE)
     - name: Started Hires
-      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_started] = TRUE)
+      dax: CALCULATE(COUNTROWS(fct_application), fct_application[is_delivery_eligible] = TRUE, fct_application[is_started] = TRUE)
   notes: >
     Because THD and segment keys are inherited, the same slicers filter this fact and
     fct_requisition without a fact-to-fact relationship. Use [Accepted Offer Events] for

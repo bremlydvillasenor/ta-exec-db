@@ -1,6 +1,6 @@
 dataset: mart_exec_demand
 layer: mart
-version: 1.1
+version: 1.2
 purpose: >
   THD-month executive mart for hiring demand, delivery and forecast. It feeds the
   Fill Rate KPI card (with its Demand / Filled / Open context), the Median Time to
@@ -10,7 +10,7 @@ purpose: >
   Fill Rate here is CURRENT fill: filled_positions counts active fills only, so a
   seat whose accepted offer was later rescinded or reneged is restated as open. The
   historical accepted-offer events are carried alongside in accepted_offer_events and
-  never decrease.
+  are preserved after losses; filtered totals can restate.
 
 grain: One row per Target Hire Date month + Business Unit + Job Family + Job Level with at least one non-cancelled requisition.
 
@@ -66,7 +66,7 @@ columns:
     nullable: false
     description: >
       SUM(fct_requisition.accepted_offer_events). Historical TA fill events on these
-      requisitions, including offers later rescinded or reneged. Never decreases.
+      requisitions, including offers later rescinded or reneged. Preserved after losses; filtered totals may restate.
       Also the denominator context for median_time_to_fill_days. Replaces the former
       accepted_offer_count, which mixed the historical event with current fill.
   - name: lost_after_acceptance_positions
@@ -136,10 +136,10 @@ data_quality_tests:
   - {test: expression, expression: "forecast_fill_rate >= fill_rate", filter: fill_rate IS NOT NULL}
   - {test: reconciliation, expression: "SUM(requested_positions) = SUM(fct_requisition.requested_positions WHERE NOT is_cancelled) in total and per segment", severity: error}
   - {test: reconciliation, expression: "SUM(open_positions) = SUM(mart_exec_risk.openings_position) in total and per segment", severity: error}
-  - {test: reconciliation, expression: "SUM(filled_positions) = COUNT(fct_application WHERE is_active_fill) in total and per segment", severity: error}
-  - {test: reconciliation, expression: "SUM(accepted_offer_events) = COUNT(fct_application WHERE is_offer_accepted_event) in total and per segment", severity: error}
-  - {test: reconciliation, expression: "SUM(lost_after_acceptance_positions) = COUNT(fct_application WHERE is_offer_accepted_event AND NOT is_active_fill)"}
-  - {test: reconciliation, expression: "SUM(started_positions) = COUNT(fct_hire_outcome rows) in total and per segment"}
+  - {test: reconciliation, expression: "SUM(filled_positions) = COUNT(fct_application WHERE is_delivery_eligible AND is_active_fill) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(accepted_offer_events) = COUNT(fct_application WHERE is_delivery_eligible AND is_offer_accepted_event) in total and per segment", severity: error}
+  - {test: reconciliation, expression: "SUM(lost_after_acceptance_positions) = COUNT(fct_application WHERE is_delivery_eligible AND is_offer_accepted_event AND NOT is_active_fill)"}
+  - {test: reconciliation, expression: "SUM(started_positions) = COUNT(fct_hire_outcome WHERE is_delivery_eligible) on the same requisitions, in total and per segment (dbt reconciliation, not a THD Power BI relationship)"}
 
 power_bi:
   hide_columns: [thd_month_key, business_unit_key, job_family_key, job_level_key, fill_rate, forecast_fill_rate, median_time_to_fill_days]

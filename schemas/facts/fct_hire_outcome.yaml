@@ -1,6 +1,6 @@
 dataset: fct_hire_outcome
 layer: fact
-version: 1.1
+version: 1.2
 purpose: >
   Hire-grain fact for hiring quality. One row per person who actually started
   employment on or before the as-of date, with the start cohort, 60-day maturity,
@@ -36,6 +36,10 @@ source: >
   start) before this fact is built. Only starts on or before as_of_date are included.
 
 columns:
+  - name: is_delivery_eligible
+    type: boolean
+    nullable: false
+    description: NOT is_cancelled on the resolved requisition at as_of_date. Filter delivery/pipeline/offer-context measures with this flag; quality retains actual hires regardless of this flag.
   - name: hire_key
     type: integer
     nullable: false
@@ -120,6 +124,7 @@ relationships:
   - {to: fct_application, columns: {application_key: application_key}, cardinality: one_to_one, active: false, notes: Logical only.}
 
 business_rules:
+  - Retain ineligible rows for audit. Delivery/pipeline measures require is_delivery_eligible; quality does not. THD and segment attribution use the resolved as-of requisition and may restate.
   - A hire is an actual employee start, not an accepted offer. Membership is defined by fct_application.is_started = true; it is never defined by application status text or by is_offer_accepted_event alone.
   - A hire appears exactly once. Duplicate start or termination source rows must be resolved upstream.
   - The 60-day window begins at employee_start_date, so start month is the cohort basis; THD and offer month are not.
@@ -131,6 +136,8 @@ business_rules:
   - A person who started and then left is a TERMINATION (termination_date), not a renege. Renege and rescind are strictly pre-start events.
 
 data_quality_tests:
+  - {test: not_null, columns: [is_delivery_eligible]}
+  - {test: reconciliation, expression: "is_delivery_eligible = NOT fct_requisition.is_cancelled for the matching requisition", severity: error}
   - {test: unique, columns: [hire_key]}
   - {test: unique, columns: [application_key]}
   - {test: not_null, columns: [hire_key, application_key, requisition_key, business_unit_key, job_family_key, job_level_key, cohort_month_key, employee_start_date, offer_accepted_date, requisition_approval_date, time_to_fill_days]}
@@ -150,22 +157,27 @@ data_quality_tests:
   - {test: referential_integrity, description: All dimension keys and application_key exist.}
 
 power_bi:
-  hide_columns: [hire_key, application_key, requisition_key, business_unit_key, job_family_key, job_level_key, cohort_month_key, employee_start_date_key]
+  hide_columns: [is_delivery_eligible, hire_key, application_key, requisition_key, business_unit_key, job_family_key, job_level_key, cohort_month_key, employee_start_date_key]
   summarization_off: [time_to_fill_days, tenure_days_at_termination, days_observed]
   measures:
     - name: Matured Hires 60d
       dax: CALCULATE(COUNTROWS(fct_hire_outcome), fct_hire_outcome[is_fully_matured_start_month] = TRUE)
     - name: Early Exits 60d
       dax: CALCULATE(COUNTROWS(fct_hire_outcome), fct_hire_outcome[is_fully_matured_start_month] = TRUE, fct_hire_outcome[is_60_day_early_attrition] = TRUE)
+    - name: Early Exits 60d (KPI)
+      dax: CALCULATE([Early Exits 60d], dim_start_cohort[kpi_cohort_window] = "latest_12")
+    - name: Matured Hires 60d (KPI)
+      dax: CALCULATE([Matured Hires 60d], dim_start_cohort[kpi_cohort_window] = "latest_12")
     - name: 60-Day Early Attrition (KPI)
-      dax: CALCULATE(DIVIDE([Early Exits 60d], [Matured Hires 60d]), dim_start_cohort[kpi_cohort_window] = "latest_12")
+      dax: DIVIDE([Early Exits 60d (KPI)], [Matured Hires 60d (KPI)])
     - name: Median Time to Fill (Start Cohort)
       dax: CALCULATE(MEDIAN(fct_hire_outcome[time_to_fill_days]), fct_hire_outcome[is_fully_matured_start_month] = TRUE)
   notes: >
     No active relationship to dim_date, so the THD slicer cannot shorten the observation
     window. BU/JF/JL slicers still apply. Quality measures are weighted (SUM/SUM), never
     an average of monthly rates.
-    Row count here is always lower than accepted offer events and lower than or equal to
-    active fills, by design: accepted offers pending a start, plus rescinds and reneges,
+    At the same unfiltered application population, hire count is no greater than
+    active fills or acceptance events. Independently filtered THD delivery and start-
+    cohort quality totals need not have that ordering. Pending/lost unstarted offers
     have no employment record to assess. Label anything built on this table "hires" or
     "started hires", never "fills".

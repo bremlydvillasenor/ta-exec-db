@@ -1,6 +1,6 @@
 dataset: fct_requisition
 layer: fact
-version: 1.1
+version: 1.2
 purpose: >
   Requisition-grain fact holding the as-of reporting state of every requisition:
   demand (requested positions), current fill (active fills), open positions,
@@ -10,7 +10,7 @@ purpose: >
   candidate-level joins.
   Current fill and historical delivery are separate: filled_positions is a
   current-state quantity that shrinks when an accepted offer is later rescinded or
-  reneged, while accepted_offer_events is a historical count that never decreases.
+  reneged, while accepted_offer_events is a historical count that is preserved after a loss for the same requisition; filtered period totals may restate.
 
 grain: One row per requisition, resolved to its state on the as-of date (2026-05-31).
 
@@ -22,7 +22,9 @@ source: >
   Requisition source system (latest snapshot on or before as_of_date). If the
   source provides multiple snapshots per requisition, the transformation must
   pick exactly one (latest snapshot_date <= as_of_date) before this fact is built.
-  Pipeline-derived columns come from fct_application and mart_stage_yield.
+  Build from int_requisition__resolved_snapshot plus
+  int_requisition__pipeline_rollup and the risk seed. The roll-up aggregates final
+  fct_application; this fact does not directly join candidate or yield rows.
 
 columns:
   # keys
@@ -178,7 +180,7 @@ relationships:
 
 business_rules:
   - Demand, Positions Filled, Open Positions and Fill Rate are all computed from this table alone.
-  - filled_positions is CURRENT state, accepted_offer_events is HISTORY. Only filled_positions responds to a post-acceptance rescind or renege; accepted_offer_events never decreases and no accepted-offer event is ever deleted or back-dated away.
+  - filled_positions is CURRENT state, accepted_offer_events is HISTORY. Only filled_positions responds to a post-acceptance rescind or renege; accepted_offer_events is preserved after a loss for the same requisition; filtered period totals may restate and no accepted-offer event is ever deleted or back-dated away.
   - accepted_offer_events = filled_positions + lost_after_acceptance_positions on every requisition.
   - One accepted offer equals one seat. This holds because fct_application allows at most one governed accepted-offer event per application (see its assumptions.one_acceptance_per_application); the three counts above are COUNTs of applications, so a second acceptance on one application would double-count a seat here.
   - started_positions <= filled_positions. An active fill that has not started yet is still a fill; it is not yet a hire.
@@ -232,7 +234,7 @@ power_bi:
     - name: Positions Filled
       dax: SUM(fct_requisition[filled_positions]) with filter is_cancelled = FALSE   -- active fills, current state
     - name: Accepted Offer Events
-      dax: SUM(fct_requisition[accepted_offer_events]) with filter is_cancelled = FALSE   -- historical, never decreases
+      dax: SUM(fct_requisition[accepted_offer_events]) with filter is_cancelled = FALSE   -- historical, is preserved after a loss for the same requisition; filtered period totals may restate
     - name: Post-Acceptance Losses
       dax: SUM(fct_requisition[lost_after_acceptance_positions]) with filter is_cancelled = FALSE
     - name: Started Positions
